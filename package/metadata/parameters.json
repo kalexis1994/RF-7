@@ -1,10 +1,121 @@
 {
   "schema_version": 1,
-  "pages": [{ "id": "output", "name": "Output", "order": 0 }],
-  "parameters": [{
-    "index": 0, "id": "gain", "name": "Output Gain", "page": "output", "order": 0,
-    "kind": { "type": "float", "minimum": 0.0, "maximum": 2.0, "default": 0.2, "step": 0.01, "unit": "x" },
-    "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
-    "suggested_control": "knob"
-  }]
+  "pages": [
+    { "id": "output", "name": "Output", "order": 0 },
+    { "id": "performance", "name": "Performance", "order": 1 },
+    { "id": "voice", "name": "Voice", "order": 2 },
+    { "id": "operators", "name": "Operators", "order": 3 }
+  ],
+  "parameters": [
+    {
+      "index": 0, "id": "gain", "name": "Output Gain", "page": "output", "order": 0,
+      "kind": { "type": "float", "minimum": 0.0, "maximum": 2.0, "default": 0.2, "step": 0.01, "unit": "x" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 1, "id": "bend_range", "name": "Bend Range", "page": "performance", "order": 0,
+      "kind": { "type": "integer", "minimum": 0, "maximum": 12, "default": 2, "step": 1, "unit": "st" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 2, "id": "master_tune", "name": "Master Tune", "page": "performance", "order": 1,
+      "kind": { "type": "float", "minimum": -50.0, "maximum": 50.0, "default": 0.0, "step": 1.0, "unit": "cent" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 3, "id": "transpose", "name": "Transpose", "page": "performance", "order": 2,
+      "kind": { "type": "integer", "minimum": -24, "maximum": 24, "default": 0, "step": 1, "unit": "st" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 4, "id": "wheel_range", "name": "Mod Wheel Range", "page": "performance", "order": 3,
+      "kind": { "type": "float", "minimum": 0.0, "maximum": 1.0, "default": 1.0, "step": 0.01 },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 5, "id": "wheel_target", "name": "Mod Wheel Target", "page": "performance", "order": 4,
+      "kind": { "type": "enum", "default": 0, "choices": [
+        { "value": 0, "name": "Pitch" },
+        { "value": 1, "name": "Amplitude" },
+        { "value": 2, "name": "Both" }
+      ] },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "list"
+    },
+    {
+      "index": 6, "id": "aftertouch_range", "name": "Aftertouch Range", "page": "performance", "order": 5,
+      "kind": { "type": "float", "minimum": 0.0, "maximum": 1.0, "default": 0.0, "step": 0.01 },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 7, "id": "aftertouch_target", "name": "Aftertouch Target", "page": "performance", "order": 6,
+      "kind": { "type": "enum", "default": 0, "choices": [
+        { "value": 0, "name": "Pitch" },
+        { "value": 1, "name": "Amplitude" },
+        { "value": 2, "name": "Both" }
+      ] },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "list"
+    },
+    {
+      "index": 8, "id": "brightness", "name": "Brightness", "page": "voice", "order": 0,
+      "kind": { "type": "float", "minimum": 0.0, "maximum": 2.0, "default": 1.0, "step": 0.01, "unit": "x" },
+      "flags": { "automatable": true, "modulatable": true, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 9, "id": "envelope_time", "name": "Envelope Time", "page": "voice", "order": 1,
+      "kind": { "type": "float", "minimum": 0.25, "maximum": 4.0, "default": 1.0, "step": 0.01, "unit": "x", "taper": "logarithmic" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 10, "id": "velocity_depth", "name": "Velocity Depth", "page": "voice", "order": 2,
+      "kind": { "type": "float", "minimum": 0.0, "maximum": 2.0, "default": 1.0, "step": 0.01, "unit": "x" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 11, "id": "operator_1", "name": "Operator 1", "page": "operators", "order": 0,
+      "kind": { "type": "boolean", "default": true },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "toggle"
+    },
+    {
+      "index": 12, "id": "operator_2", "name": "Operator 2", "page": "operators", "order": 1,
+      "kind": { "type": "boolean", "default": true },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "toggle"
+    },
+    {
+      "index": 13, "id": "operator_3", "name": "Operator 3", "page": "operators", "order": 2,
+      "kind": { "type": "boolean", "default": true },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "toggle"
+    },
+    {
+      "index": 14, "id": "operator_4", "name": "Operator 4", "page": "operators", "order": 3,
+      "kind": { "type": "boolean", "default": true },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "toggle"
+    },
+    {
+      "index": 15, "id": "operator_5", "name": "Operator 5", "page": "operators", "order": 4,
+      "kind": { "type": "boolean", "default": true },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "toggle"
+    },
+    {
+      "index": 16, "id": "operator_6", "name": "Operator 6", "page": "operators", "order": 5,
+      "kind": { "type": "boolean", "default": true },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "toggle"
+    }
+  ]
 }

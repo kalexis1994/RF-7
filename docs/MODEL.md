@@ -28,7 +28,7 @@ and [`crates/rf7-dsp/src/algorithm.rs`](../crates/rf7-dsp/src/algorithm.rs).
 | Fixed mode is four decades from 1 Hz, `10^(coarse mod 4 + fine/100)` | Documented | |
 | Transpose byte 24 is centre | Documented | |
 | Detune step ≈ 1.7 cents | **Approximate** | Applied as a constant factor in the logarithmic domain. On the real instrument detune is a fixed increment on the phase accumulator, so it is a larger interval on low notes than on high ones. Not yet modelled. |
-| Pitch bend range of two semitones | Documented, but not from the voice | It lives in the DX7's function parameters, not in a patch, so RF-7 fixes it. |
+| Pitch bend range | Documented, but not from the voice | It lives in the DX7's function parameters, not in a patch, so RF-7 exposes it as a control. See below. |
 
 ## Level
 
@@ -63,6 +63,28 @@ the 4064-unit range spans a little over 96 dB.
 | LFO speed 0..99 to about 0.06..47 Hz | **Approximate** | Exponential between the two documented endpoints. The instrument's own curve is not exponential throughout. |
 | LFO delay to 0..4 s, then a fade | **Approximate** | |
 | Pitch modulation sensitivity 0..7 | **Approximate** | A published-shaped table scaled to ±12 semitones at full depth. |
+
+## Controls
+
+The seventeen parameters RackForge draws are not voice data and never touch a
+cartridge: they are offsets on top of whatever program is loaded. Every one of
+them is neutral where it starts, so a cartridge plays exactly as programmed
+until something is moved, and a test asserts that.
+
+| Control | Verdict | Note |
+| --- | --- | --- |
+| Bend range, master tune, transpose | Documented, but not from the voice | The DX7 keeps all three among its function parameters, outside the cartridge, which is exactly where RF-7 keeps them. |
+| Mod wheel range and target | Documented, in part | The DX7 assigns each controller to pitch, amplitude or the envelope bias with its own range. RF-7 offers the first two destinations and not the third. |
+| Aftertouch range and target | Documented, in part | Same layer, same two destinations. |
+| **Brightness** | **RF-7 addition** | Scales the modulation index of every operator at once. The DX7 had no such control: on the instrument you would reach for six output levels. It exists because a cartridge cannot be edited yet, and it is the fastest way to hear what the modulation index does — the number the ledger above says is unmeasured. |
+| **Envelope time** | **RF-7 addition** | Stretches every segment of every envelope by one factor. Read once, when a note starts. |
+| **Velocity depth** | **RF-7 addition** | Scales the velocity offset the patch already asks for. At 0 the instrument stops answering to velocity entirely. |
+| **Operator switches** | Documented as a panel action, not as a control | The DX7 can silence an operator from its front panel; it is not a voice parameter and not continuous. Muting one here changes nothing about how long a note lives. |
+
+The three additions are marked because a reader should be able to tell at a
+glance which controls would exist on the hardware and which are RF-7 making a
+fixed cartridge usable. None of them is a substitute for editing a voice, which
+is a separate milestone.
 
 ## The sine
 

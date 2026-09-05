@@ -38,14 +38,14 @@ version = "0.1.14"
 
 [[package]]
 name = "rf7-dsp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rf7-voice",
 ]
 
 [[package]]
 name = "rf7-lab"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rf7-dsp",
  "rf7-voice",
@@ -54,16 +54,17 @@ dependencies = [
 
 [[package]]
 name = "rf7-plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rackforge-plugin-sdk",
  "rf7-dsp",
  "rf7-voice",
+ "serde_json",
 ]
 
 [[package]]
 name = "rf7-voice"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "serde"

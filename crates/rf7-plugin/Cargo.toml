@@ -13,6 +13,11 @@ rf7-dsp.workspace = true
 rf7-voice.workspace = true
 rackforge-plugin-sdk.workspace = true
 
+# Only to read the package schema back in tests/schema.rs. The plugin itself
+# parses no JSON: its catalog is written by hand into the transfer buffer.
+[dev-dependencies]
+serde_json.workspace = true
+
 # The SDK export macro implements the raw ABI. Handwritten code is safe Rust.
 [lints.clippy]
 all = "warn"

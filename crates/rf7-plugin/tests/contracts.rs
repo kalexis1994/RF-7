@@ -1,7 +1,10 @@
 //! What the host is allowed to do to this plugin, and what it gets back.
 
 use rackforge_plugin_sdk::{MidiEvent, ParameterEvent, Processor};
-use rf7_plugin::{MAX_FRAMES, PARAMETER_GAIN, RESOURCE_CARTRIDGE, Rf7Processor, TRANSFER_BYTES};
+use rf7_plugin::{
+    MAX_FRAMES, PARAMETER_COUNT, PARAMETER_GAIN, RESOURCE_CARTRIDGE, Rf7Processor, TRANSFER_BYTES,
+    parameters,
+};
 use rf7_voice::{
     BULK_DUMP_LENGTH, Cartridge, VOICES_PER_CARTRIDGE, Voice, encode_bulk_dump, encode_voice_dump,
     factory_voice,
@@ -128,70 +131,169 @@ fn a_wrong_length_status_byte_is_refused() {
 }
 
 #[test]
-fn the_gain_parameter_is_the_only_one_and_is_bounded() {
+fn every_declared_parameter_is_readable_writable_and_bounded() {
     let mut processor = prepared();
-    assert_eq!(processor.get_parameter(PARAMETER_GAIN), Some(0.2));
-    assert_eq!(processor.get_parameter(1), None);
-    assert!(processor.set_parameter(PARAMETER_GAIN, 1.0));
-    assert_eq!(processor.get_parameter(PARAMETER_GAIN), Some(1.0));
-    assert!(!processor.set_parameter(PARAMETER_GAIN, -0.1));
-    assert!(!processor.set_parameter(PARAMETER_GAIN, 2.1));
-    assert!(!processor.set_parameter(PARAMETER_GAIN, f64::NAN));
-    assert!(!processor.set_parameter(1, 0.5));
-    assert_eq!(processor.get_parameter(PARAMETER_GAIN), Some(1.0));
+    assert_eq!(processor.get_parameter(PARAMETER_COUNT as u32), None);
+    assert_eq!(processor.get_parameter(u32::MAX), None);
+    assert!(!processor.set_parameter(PARAMETER_COUNT as u32, 0.0));
+
+    for (index, parameter) in parameters::PARAMETERS.iter().enumerate() {
+        let index = index as u32;
+        assert_eq!(
+            processor.get_parameter(index),
+            Some(parameter.default),
+            "{} does not start at its declared default",
+            parameter.id
+        );
+        assert!(
+            processor.set_parameter(index, parameter.maximum),
+            "{}",
+            parameter.id
+        );
+        assert_eq!(processor.get_parameter(index), Some(parameter.maximum));
+        assert!(!processor.set_parameter(index, parameter.maximum + 0.5));
+        assert!(!processor.set_parameter(index, parameter.minimum - 0.5));
+        assert!(!processor.set_parameter(index, f64::NAN));
+        assert_eq!(
+            processor.get_parameter(index),
+            Some(parameter.maximum),
+            "{} moved on a refused write",
+            parameter.id
+        );
+        assert!(processor.set_parameter(index, parameter.default));
+    }
+}
+
+#[test]
+fn the_gain_parameter_still_scales_the_output() {
+    let mut loud = prepared();
+    loud.set_parameter(PARAMETER_GAIN, 1.0);
+    let full = peak(&render(&mut loud, &[note_on(0, 60, 100)], 20));
+    let mut quiet = prepared();
+    quiet.set_parameter(PARAMETER_GAIN, 0.5);
+    let half = peak(&render(&mut quiet, &[note_on(0, 60, 100)], 20));
+    assert!(
+        (half * 2.0 - full).abs() < full * 0.02,
+        "{half} against {full}"
+    );
+}
+
+#[test]
+fn muting_every_operator_silences_the_instrument() {
+    let mut processor = prepared();
+    for operator in 0..6 {
+        assert!(processor.set_parameter(parameters::OPERATOR_FIRST + operator, 0.0));
+    }
+    assert_eq!(
+        peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)),
+        0.0
+    );
+    assert!(processor.set_parameter(parameters::OPERATOR_FIRST, 1.0));
+    assert!(peak(&render(&mut processor, &[note_on(0, 62, 100)], 20)) > 0.0);
+}
+
+#[test]
+fn aftertouch_reaches_the_engine_at_both_midi_widths() {
+    // Opened all the way to pitch, so pressure is unmistakable in the output.
+    let sounded = |pressure: Option<MidiEvent>| {
+        let mut processor = prepared();
+        processor.set_parameter(parameters::AFTERTOUCH_RANGE, 1.0);
+        let mut midi = vec![note_on(0, 60, 100)];
+        midi.extend(pressure);
+        render(&mut processor, &midi, 20)
+    };
+    let idle = sounded(None);
+    let pressed = sounded(Some(
+        MidiEvent::new(0, [0xd0, 127, 0], 2).expect("channel pressure is two bytes"),
+    ));
+    assert_ne!(idle, pressed, "channel pressure should be heard");
+
+    // A three-byte channel pressure is malformed and silences the block.
+    let mut processor = prepared();
+    let malformed = [MidiEvent::new(0, [0xd0, 127, 0], 3).expect("three bytes")];
+    let mut output = vec![1.0; FRAMES as usize * 2];
+    processor.process(&[], &mut output, &malformed, &[], FRAMES, 0, 2);
+    assert!(output.iter().all(|sample| *sample == 0.0));
 }
 
 #[test]
 fn state_round_trips_and_a_broken_state_changes_nothing() {
+    let expected = 16 + PARAMETER_COUNT * 8;
     let mut processor = prepared();
     processor.set_parameter(PARAMETER_GAIN, 0.75);
+    processor.set_parameter(parameters::BEND_RANGE, 12.0);
+    processor.set_parameter(parameters::BRIGHTNESS, 1.5);
+    processor.set_parameter(parameters::OPERATOR_FIRST + 2, 0.0);
     assert!(processor.load_preset("program-05"));
-    let mut saved = [0u8; 64];
+    let mut saved = [0u8; 512];
     let length = processor.save_state(&mut saved).expect("state must fit");
-    assert_eq!(length, 20);
+    assert_eq!(length, expected);
+    // A buffer that cannot hold the whole state writes none of it.
+    assert_eq!(processor.save_state(&mut [0u8; 8]), None);
 
     let mut restored = prepared();
     assert!(restored.load_state(&saved[..length]));
     assert_eq!(restored.get_parameter(PARAMETER_GAIN), Some(0.75));
+    assert_eq!(restored.get_parameter(parameters::BEND_RANGE), Some(12.0));
+    assert_eq!(restored.get_parameter(parameters::BRIGHTNESS), Some(1.5));
+    assert_eq!(
+        restored.get_parameter(parameters::OPERATOR_FIRST + 2),
+        Some(0.0)
+    );
 
     let mut untouched = prepared();
     untouched.set_parameter(PARAMETER_GAIN, 1.5);
-    assert!(!untouched.load_state(&[]), "empty");
-    assert!(!untouched.load_state(&saved[..19]), "short");
-    let mut wrong_magic = saved;
-    wrong_magic[0] = b'X';
-    assert!(!untouched.load_state(&wrong_magic[..length]), "wrong magic");
-    let mut wrong_version = saved;
-    wrong_version[4] = 99;
-    assert!(
-        !untouched.load_state(&wrong_version[..length]),
-        "wrong version"
-    );
-    let mut wrong_gain = saved;
-    wrong_gain[8..16].copy_from_slice(&f64::NAN.to_le_bytes());
-    assert!(
-        !untouched.load_state(&wrong_gain[..length]),
-        "gain is not a number"
-    );
-    let mut wrong_program = saved;
-    wrong_program[16..20].copy_from_slice(&99u32.to_le_bytes());
-    assert!(
-        !untouched.load_state(&wrong_program[..length]),
-        "no such program"
-    );
+    let refused: [(&str, Vec<u8>); 6] = [
+        ("empty", Vec::new()),
+        ("short", saved[..length - 1].to_vec()),
+        ("wrong magic", {
+            let mut bytes = saved[..length].to_vec();
+            bytes[0] = b'X';
+            bytes
+        }),
+        ("unknown version", {
+            let mut bytes = saved[..length].to_vec();
+            bytes[4] = 99;
+            bytes
+        }),
+        ("impossible count", {
+            let mut bytes = saved[..length].to_vec();
+            bytes[12..16].copy_from_slice(&99u32.to_le_bytes());
+            bytes
+        }),
+        ("a value out of its range", {
+            let mut bytes = saved[..length].to_vec();
+            bytes[16..24].copy_from_slice(&99.0f64.to_le_bytes());
+            bytes
+        }),
+    ];
+    for (reason, bytes) in refused {
+        assert!(!untouched.load_state(&bytes), "{reason} was accepted");
+    }
     assert_eq!(untouched.get_parameter(PARAMETER_GAIN), Some(1.5));
 }
 
 #[test]
-fn a_state_saved_before_preparing_still_restores() {
-    let mut processor = Rf7Processor::default();
-    assert!(processor.load_preset("program-08"));
-    let mut saved = [0u8; 64];
-    let length = processor.save_state(&mut saved).unwrap();
-    let mut later = Rf7Processor::default();
-    assert!(later.load_state(&saved[..length]));
-    assert!(later.prepare(48_000.0, FRAMES, 0, 2));
-    assert!(peak(&render(&mut later, &[note_on(0, 60, 100)], 20)) > 0.0);
+fn a_state_written_by_the_first_version_still_opens() {
+    // Twenty bytes: magic, version 1, a gain and a program. Everything the
+    // first release never had comes back at its default.
+    let mut first = [0u8; 20];
+    first[..4].copy_from_slice(b"RF7A");
+    first[4..8].copy_from_slice(&1u32.to_le_bytes());
+    first[8..16].copy_from_slice(&0.6f64.to_le_bytes());
+    first[16..20].copy_from_slice(&4u32.to_le_bytes());
+
+    let mut processor = prepared();
+    processor.set_parameter(parameters::BRIGHTNESS, 2.0);
+    assert!(processor.load_state(&first));
+    assert_eq!(processor.get_parameter(PARAMETER_GAIN), Some(0.6));
+    assert_eq!(processor.get_parameter(parameters::BRIGHTNESS), Some(1.0));
+    assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
+
+    // The same header with a program that does not exist is still refused.
+    let mut broken = first;
+    broken[16..20].copy_from_slice(&99u32.to_le_bytes());
+    assert!(!processor.load_state(&broken));
 }
 
 #[test]

@@ -1,5 +1,15 @@
 # Roadmap
 
+## 0.1.1 — done
+
+- Seventeen parameters in four pages, checked against the package schema by a
+  test so the two descriptions cannot drift apart.
+- The DX7's function-parameter layer: bend range, master tune, transpose, and a
+  range and destination each for the wheel and for aftertouch.
+- Aftertouch handled at both MIDI widths; before this it was dropped.
+- Brightness, envelope time, velocity depth and the six operator switches.
+- State version 2 carries every parameter, and still opens a version 1 state.
+
 ## 0.1.0 — done
 
 - The voice data model, both DX7 byte layouts, and both System Exclusive
@@ -36,6 +46,10 @@
 
 ## Then
 
+- Portamento and a mono/legato voice mode. Both are real DX7 controls and both
+  need genuine work in the allocator: last-note priority, a glide in the
+  logarithmic frequency domain, and a decision about whether a legato note
+  retriggers its envelopes, which on the instrument it does not.
 - A ZIP import container, so a folder of `.syx` files can be installed in one
   step instead of one cartridge at a time.
 - Portable individual-program editing, so the six operators can be edited inside

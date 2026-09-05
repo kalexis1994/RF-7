@@ -18,6 +18,24 @@ constant that sets how bright the whole instrument is.
 **No voice data ships here.** The eight factory voices were written for RF-7.
 The voices a DX7 shipped with are Yamaha's; RF-7 plays a cartridge you supply.
 
+## Controls
+
+Seventeen parameters, in four pages. They are offsets on the loaded program,
+not a second copy of it, and every one of them is neutral at its default:
+
+- **Output** — output gain.
+- **Performance** — bend range, master tune, transpose, and a range and
+  destination each for the modulation wheel and for aftertouch. This is the
+  DX7's own function-parameter layer, which never lived in a cartridge.
+- **Voice** — brightness, envelope time and velocity depth. These the DX7 did
+  not have; they exist because a cartridge cannot be edited yet. Brightness
+  scales the modulation index of every operator at once, which is also the
+  quickest way to hear the one constant the model ledger says is unmeasured.
+- **Operators** — six switches, one per operator.
+
+Editing the 155 parameters of a voice is a different contract and a later
+milestone; see [the roadmap](docs/ROADMAP.md).
+
 ## Quick start
 
 To build, validate, install and open the current instrument in RackForge Desktop

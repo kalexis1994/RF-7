@@ -51,9 +51,20 @@ impl Envelope {
     /// has already folded the programmed output level, keyboard level scaling
     /// and velocity into it, so the segment levels here stay the programmed
     /// ones and only their common ceiling moves.
-    pub fn operator(operator: &Operator, note: u8, ceiling: f32, sample_rate: f32) -> Self {
+    ///
+    /// `time_scale` stretches every segment: 2.0 makes the whole envelope take
+    /// twice as long. It is read once, here, so changing it does not disturb
+    /// notes that are already sounding.
+    pub fn operator(
+        operator: &Operator,
+        note: u8,
+        ceiling: f32,
+        time_scale: f32,
+        sample_rate: f32,
+    ) -> Self {
         let key_rate = key_rate_offset(note, operator.rate_scaling);
         let ceiling = ceiling.clamp(0.0, LEVEL_FULL);
+        let seconds = sample_rate * time_scale.max(f32::MIN_POSITIVE);
         let mut targets = [0.0; SEGMENTS];
         let mut steps = [0.0; SEGMENTS];
         for segment in 0..SEGMENTS {
@@ -62,7 +73,7 @@ impl Envelope {
             // an operator turned down keeps the shape of its envelope.
             targets[segment] = (ceiling - (LEVEL_FULL - programmed)).clamp(0.0, LEVEL_FULL);
             let quantised = quantised_rate(operator.eg_rate[segment], key_rate);
-            steps[segment] = rate_units_per_second(quantised) / sample_rate;
+            steps[segment] = rate_units_per_second(quantised) / seconds;
         }
         Self {
             level: targets[RELEASE],
@@ -77,12 +88,18 @@ impl Envelope {
 
     /// The pitch envelope, shared by every operator in the voice. Its unit is
     /// the semitone and it has no ceiling to approach, so it does not curve.
-    pub fn pitch(targets: [f32; SEGMENTS], rates: [u8; SEGMENTS], sample_rate: f32) -> Self {
+    pub fn pitch(
+        targets: [f32; SEGMENTS],
+        rates: [u8; SEGMENTS],
+        time_scale: f32,
+        sample_rate: f32,
+    ) -> Self {
         let mut steps = [0.0; SEGMENTS];
+        let seconds = sample_rate * time_scale.max(f32::MIN_POSITIVE);
         for segment in 0..SEGMENTS {
             let quantised = quantised_rate(rates[segment], 0);
             // The same rate curve, rescaled from level units to semitones.
-            steps[segment] = rate_units_per_second(quantised) * (96.0 / LEVEL_FULL) / sample_rate;
+            steps[segment] = rate_units_per_second(quantised) * (96.0 / LEVEL_FULL) / seconds;
         }
         Self {
             level: targets[RELEASE],
@@ -159,7 +176,7 @@ mod tests {
     }
 
     fn at_full(operator: &Operator, note: u8) -> Envelope {
-        Envelope::operator(operator, note, LEVEL_FULL, 48_000.0)
+        Envelope::operator(operator, note, LEVEL_FULL, 1.0, 48_000.0)
     }
 
     fn run(envelope: &mut Envelope, samples: usize) -> f32 {
@@ -222,7 +239,8 @@ mod tests {
     #[test]
     fn a_lower_ceiling_lowers_the_whole_envelope() {
         let quiet = {
-            let mut envelope = Envelope::operator(&full_operator(), 60, LEVEL_FULL / 2.0, 48_000.0);
+            let mut envelope =
+                Envelope::operator(&full_operator(), 60, LEVEL_FULL / 2.0, 1.0, 48_000.0);
             run(&mut envelope, 48_000)
         };
         let loud = {
@@ -244,8 +262,35 @@ mod tests {
     }
 
     #[test]
+    fn stretching_time_slows_every_segment_by_the_same_factor() {
+        let mut operator = full_operator();
+        operator.eg_rate = [50, 50, 50, 50];
+        let plain = {
+            let mut envelope = Envelope::operator(&operator, 60, LEVEL_FULL, 1.0, 48_000.0);
+            let mut samples = 0;
+            while envelope.level() < LEVEL_FULL && samples < 48_000 * 10 {
+                envelope.advance();
+                samples += 1;
+            }
+            samples
+        };
+        let stretched = {
+            let mut envelope = Envelope::operator(&operator, 60, LEVEL_FULL, 4.0, 48_000.0);
+            let mut samples = 0;
+            while envelope.level() < LEVEL_FULL && samples < 48_000 * 10 {
+                envelope.advance();
+                samples += 1;
+            }
+            samples
+        };
+        let ratio = stretched as f32 / plain as f32;
+        assert!((ratio - 4.0).abs() < 0.05, "four times slower gave {ratio}");
+    }
+
+    #[test]
     fn the_pitch_envelope_rests_where_it_was_told_to() {
-        let mut envelope = Envelope::pitch([12.0, 12.0, 12.0, 0.0], [99, 60, 60, 60], 48_000.0);
+        let mut envelope =
+            Envelope::pitch([12.0, 12.0, 12.0, 0.0], [99, 60, 60, 60], 1.0, 48_000.0);
         assert_eq!(envelope.level(), 0.0);
         let held = run(&mut envelope, 480);
         assert!(

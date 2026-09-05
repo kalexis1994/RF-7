@@ -19,6 +19,57 @@ use rf7_voice::Voice;
 /// an FM patch is a ratio; this is the scale.
 pub const MODULATION_CYCLES: f32 = 1.0;
 
+/// What the engine's controls contribute to a note as it starts.
+///
+/// Read once, here, so changing any of them never disturbs a note that is
+/// already sounding — which is what a transpose switch or an envelope-time
+/// dial should do, and what automating one of them must not undo.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VoiceSetup {
+    /// Semitones on top of the voice's own transpose byte.
+    pub transpose: i32,
+    /// Stretches every envelope segment. 1.0 is the programmed speed.
+    pub envelope_time: f32,
+    /// Scales how much level a soft key gives away. 1.0 is the patch's own.
+    pub velocity_depth: f32,
+}
+
+impl Default for VoiceSetup {
+    fn default() -> Self {
+        Self {
+            transpose: 0,
+            envelope_time: 1.0,
+            velocity_depth: 1.0,
+        }
+    }
+}
+
+/// What the engine contributes to every sample of every sounding note.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Performance {
+    /// Semitones, from bend, master tune and the LFO together.
+    pub pitch: f32,
+    /// How much of the amplitude modulation is in, 0.0..=1.0.
+    pub amplitude: f32,
+    /// Cycles of phase deviation per unit of modulator output: this is
+    /// [`MODULATION_CYCLES`] scaled by the engine's brightness control.
+    pub modulation: f32,
+    /// Bit `i` set means OP(i+1) is heard. A muted operator neither sounds nor
+    /// modulates, but it does not change how long the note lives.
+    pub operators: u8,
+}
+
+impl Default for Performance {
+    fn default() -> Self {
+        Self {
+            pitch: 0.0,
+            amplitude: 0.0,
+            modulation: MODULATION_CYCLES,
+            operators: (1 << OPERATORS) - 1,
+        }
+    }
+}
+
 /// Concert pitch, and the MIDI note it sits on.
 const REFERENCE_HERTZ: f64 = 440.0;
 const REFERENCE_NOTE: f64 = 69.0;
@@ -74,8 +125,17 @@ impl Default for NoteVoice {
 }
 
 impl NoteVoice {
-    pub fn start(&mut self, patch: &Voice, channel: u8, note: u8, velocity: u8, sample_rate: f32) {
-        let transposed = i32::from(note) + i32::from(patch.transpose.min(48)) - TRANSPOSE_CENTRE;
+    pub fn start(
+        &mut self,
+        patch: &Voice,
+        channel: u8,
+        note: u8,
+        velocity: u8,
+        setup: &VoiceSetup,
+        sample_rate: f32,
+    ) {
+        let transposed = i32::from(note) + i32::from(patch.transpose.min(48)) - TRANSPOSE_CENTRE
+            + setup.transpose;
         let hertz = REFERENCE_HERTZ * (((f64::from(transposed) - REFERENCE_NOTE) / 12.0).exp2());
         self.algorithm = &ALGORITHMS[usize::from(patch.algorithm.min(31))];
         self.feedback = feedback_amount(patch.feedback);
@@ -86,9 +146,10 @@ impl NoteVoice {
             let scaled = (scale_output_level(operator.output_level)
                 + key_level_offset(note, operator))
             .clamp(0, 127);
-            let ceiling =
-                scaled as f32 * 32.0 + velocity_offset(velocity, operator.velocity_sensitivity);
-            self.envelopes[index] = Envelope::operator(operator, note, ceiling, sample_rate);
+            let ceiling = scaled as f32 * 32.0
+                + velocity_offset(velocity, operator.velocity_sensitivity) * setup.velocity_depth;
+            self.envelopes[index] =
+                Envelope::operator(operator, note, ceiling, setup.envelope_time, sample_rate);
             self.fixed[index] = operator.fixed_frequency;
             let operator_hertz = if operator.fixed_frequency {
                 fixed_frequency(operator)
@@ -111,7 +172,12 @@ impl NoteVoice {
             pitch_eg_semitones(patch.pitch_eg_level[2]),
             pitch_eg_semitones(patch.pitch_eg_level[3]),
         ];
-        self.pitch_envelope = Envelope::pitch(targets, patch.pitch_eg_rate, sample_rate);
+        self.pitch_envelope = Envelope::pitch(
+            targets,
+            patch.pitch_eg_rate,
+            setup.envelope_time,
+            sample_rate,
+        );
         self.channel = channel;
         self.note = note;
         self.held = true;
@@ -155,21 +221,26 @@ impl NoteVoice {
         *self = Self::default();
     }
 
-    /// One sample. `pitch` is the whole voice's detuning in semitones, and
-    /// `amplitude` is how much of the amplitude modulation is currently in,
-    /// from 0.0 to 1.0.
-    pub fn next_sample(&mut self, sine: &Sine, pitch: f32, amplitude: f32) -> f32 {
+    /// One sample, under whatever the engine's controls currently say.
+    pub fn next_sample(&mut self, sine: &Sine, performance: &Performance) -> f32 {
         if !self.active {
             return 0.0;
         }
         self.age += 1;
-        let semitones = pitch + self.pitch_envelope.advance();
+        let semitones = performance.pitch + self.pitch_envelope.advance();
         let factor = (semitones / 12.0).exp2();
         let mut sum = 0.0;
         let mut audible = false;
         for index in (0..OPERATORS).rev() {
-            let units = self.envelopes[index].advance() - self.amp_mod[index] * amplitude;
-            let gain = level_gain(units);
+            let units =
+                self.envelopes[index].advance() - self.amp_mod[index] * performance.amplitude;
+            // A muted operator is silent but is still counted as sounding
+            // below, so muting one never shortens or extends the note.
+            let gain = if performance.operators & (1 << index) == 0 {
+                0.0
+            } else {
+                level_gain(units)
+            };
             let mut modulation = 0.0;
             let sources = self.algorithm.modulators[index];
             for source in index + 1..OPERATORS {
@@ -193,7 +264,7 @@ impl NoteVoice {
             let mut phase = self.phases[index] + increment;
             phase -= phase.floor();
             self.phases[index] = phase;
-            let output = sine.lookup(phase + modulation * MODULATION_CYCLES) * gain;
+            let output = sine.lookup(phase + modulation * performance.modulation) * gain;
             self.previous[index] = self.outputs[index];
             self.outputs[index] = output;
             if self.algorithm.is_carrier(index) {
@@ -222,11 +293,21 @@ mod tests {
     use rf7_voice::factory_voice;
 
     fn render(patch: &Voice, note: u8, velocity: u8, samples: usize) -> Vec<f32> {
+        render_with(patch, note, velocity, samples, &Performance::default())
+    }
+
+    fn render_with(
+        patch: &Voice,
+        note: u8,
+        velocity: u8,
+        samples: usize,
+        performance: &Performance,
+    ) -> Vec<f32> {
         let sine = Sine::new();
         let mut voice = NoteVoice::default();
-        voice.start(patch, 0, note, velocity, 48_000.0);
+        voice.start(patch, 0, note, velocity, &VoiceSetup::default(), 48_000.0);
         (0..samples)
-            .map(|_| voice.next_sample(&sine, 0.0, 0.0))
+            .map(|_| voice.next_sample(&sine, performance))
             .collect()
     }
 
@@ -252,13 +333,14 @@ mod tests {
         let patch = factory_voice(4); // RF MARIMBA, no sustain segment
         let sine = Sine::new();
         let mut voice = NoteVoice::default();
-        voice.start(&patch, 0, 60, 100, 48_000.0);
+        voice.start(&patch, 0, 60, 100, &VoiceSetup::default(), 48_000.0);
         voice.release();
+        let performance = Performance::default();
         for _ in 0..48_000 * 4 {
-            voice.next_sample(&sine, 0.0, 0.0);
+            voice.next_sample(&sine, &performance);
         }
         assert!(!voice.is_active(), "the voice never finished");
-        assert_eq!(voice.next_sample(&sine, 0.0, 0.0), 0.0);
+        assert_eq!(voice.next_sample(&sine, &performance), 0.0);
     }
 
     #[test]
@@ -316,13 +398,134 @@ mod tests {
     fn silencing_a_voice_leaves_nothing_behind() {
         let sine = Sine::new();
         let mut voice = NoteVoice::default();
-        voice.start(&factory_voice(0), 3, 72, 100, 48_000.0);
+        voice.start(
+            &factory_voice(0),
+            3,
+            72,
+            100,
+            &VoiceSetup::default(),
+            48_000.0,
+        );
+        let performance = Performance::default();
         for _ in 0..1_000 {
-            voice.next_sample(&sine, 0.0, 0.0);
+            voice.next_sample(&sine, &performance);
         }
         voice.silence();
         assert!(!voice.is_active());
-        assert_eq!(voice.next_sample(&sine, 0.0, 0.0), 0.0);
+        assert_eq!(voice.next_sample(&sine, &performance), 0.0);
+    }
+
+    #[test]
+    fn brightness_moves_the_modulation_depth_and_leaves_a_carrier_alone() {
+        let patch = factory_voice(0); // RF TINES, three modulator pairs.
+        let dark = Performance {
+            modulation: 0.0,
+            ..Performance::default()
+        };
+        let bright = Performance {
+            modulation: MODULATION_CYCLES * 2.0,
+            ..Performance::default()
+        };
+        // With no modulation at all the carriers are plain sines, so the
+        // waveform crosses zero exactly once per cycle per carrier.
+        let plain = zero_crossings(&render_with(&patch, 60, 100, 24_000, &dark));
+        let normal = zero_crossings(&render(&patch, 60, 100, 24_000));
+        let loud = zero_crossings(&render_with(&patch, 60, 100, 24_000, &bright));
+        assert!(normal > plain, "modulation should add crossings");
+        assert!(loud > normal, "more modulation should add more");
+        // A patch with no modulators at all does not care.
+        let organ = factory_voice(6);
+        assert_eq!(
+            zero_crossings(&render_with(&organ, 60, 100, 24_000, &bright)),
+            zero_crossings(&render(&organ, 60, 100, 24_000)),
+        );
+    }
+
+    #[test]
+    fn muting_an_operator_silences_it_without_changing_the_note_length() {
+        let patch = factory_voice(6); // RF ORGAN: six carriers, nothing else.
+        let all = peak(&render(&patch, 60, 100, 12_000));
+        let none = Performance {
+            operators: 0,
+            ..Performance::default()
+        };
+        assert_eq!(peak(&render_with(&patch, 60, 100, 12_000, &none)), 0.0);
+        let first_only = Performance {
+            operators: 1,
+            ..Performance::default()
+        };
+        let one = peak(&render_with(&patch, 60, 100, 12_000, &first_only));
+        assert!(one > 0.0 && one < all, "one carrier of six gave {one}");
+
+        // Every carrier muted, and the voice still ends when its envelopes do.
+        let sine = Sine::new();
+        let mut voice = NoteVoice::default();
+        voice.start(
+            &factory_voice(4),
+            0,
+            60,
+            100,
+            &VoiceSetup::default(),
+            48_000.0,
+        );
+        voice.release();
+        for _ in 0..48_000 * 4 {
+            voice.next_sample(&sine, &none);
+        }
+        assert!(!voice.is_active(), "a muted voice must still free itself");
+    }
+
+    #[test]
+    fn the_setup_values_are_read_once_at_the_start_of_a_note() {
+        let sine = Sine::new();
+        let patch = factory_voice(6);
+        let mut plain = NoteVoice::default();
+        plain.start(&patch, 0, 60, 100, &VoiceSetup::default(), 48_000.0);
+        let mut octave = NoteVoice::default();
+        let setup = VoiceSetup {
+            transpose: 12,
+            ..VoiceSetup::default()
+        };
+        octave.start(&patch, 0, 60, 100, &setup, 48_000.0);
+        let performance = Performance::default();
+        let low: Vec<f32> = (0..48_000)
+            .map(|_| plain.next_sample(&sine, &performance))
+            .collect();
+        let high: Vec<f32> = (0..48_000)
+            .map(|_| octave.next_sample(&sine, &performance))
+            .collect();
+        let ratio = zero_crossings(&high) as f32 / zero_crossings(&low) as f32;
+        assert!(
+            (ratio - 2.0).abs() < 0.1,
+            "transpose gave a ratio of {ratio}"
+        );
+    }
+
+    #[test]
+    fn velocity_depth_scales_how_much_a_soft_key_gives_away() {
+        let patch = factory_voice(0);
+        let soft = |depth: f32| {
+            let sine = Sine::new();
+            let mut voice = NoteVoice::default();
+            let setup = VoiceSetup {
+                velocity_depth: depth,
+                ..VoiceSetup::default()
+            };
+            voice.start(&patch, 0, 60, 20, &setup, 48_000.0);
+            let performance = Performance::default();
+            let rendered: Vec<f32> = (0..12_000)
+                .map(|_| voice.next_sample(&sine, &performance))
+                .collect();
+            peak(&rendered)
+        };
+        let flat = soft(0.0);
+        let normal = soft(1.0);
+        let steep = soft(2.0);
+        assert!(
+            flat > normal,
+            "depth 0 should ignore how softly it was played"
+        );
+        assert!(normal > steep, "depth 2 should punish a soft key harder");
     }
 
     #[test]

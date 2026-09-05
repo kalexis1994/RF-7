@@ -21,7 +21,7 @@ pub use algorithm::{ALGORITHMS, Algorithm};
 pub use envelope::Envelope;
 pub use sine::Sine;
 pub use tables::LEVEL_FULL;
-pub use voice::{MODULATION_CYCLES, NoteVoice};
+pub use voice::{MODULATION_CYCLES, NoteVoice, Performance, VoiceSetup};
 
 use lfo::Lfo;
 use rf7_voice::{Cartridge, VOICES_PER_CARTRIDGE, Voice, factory_cartridge, printable_name};
@@ -36,7 +36,22 @@ pub const SAMPLE_RATE_MAX: f32 = 192_000.0;
 
 /// Pitch bend range. The DX7 keeps this outside the voice data, among its
 /// function parameters, so it belongs to the engine and not to a patch.
-pub const BEND_SEMITONES: f32 = 2.0;
+pub const BEND_SEMITONES_DEFAULT: f32 = 2.0;
+pub const BEND_SEMITONES_MAX: f32 = 12.0;
+
+/// Master tune, either side of concert pitch.
+pub const TUNE_CENTS_MAX: f32 = 50.0;
+/// Engine transpose, on top of whatever the voice itself asks for.
+pub const TRANSPOSE_MAX: i32 = 24;
+/// Brightness scales the modulation depth of every operator at once.
+pub const BRIGHTNESS_MAX: f32 = 2.0;
+/// Envelope time stretches or shortens every segment of every envelope.
+pub const ENVELOPE_TIME_MIN: f32 = 0.25;
+pub const ENVELOPE_TIME_MAX: f32 = 4.0;
+/// Velocity depth scales how much level a soft key gives away.
+pub const VELOCITY_DEPTH_MAX: f32 = 2.0;
+/// Every operator heard.
+pub const ALL_OPERATORS: u8 = (1 << OPERATORS) - 1;
 
 /// Conservative by default: six carriers across sixteen voices can sum well
 /// past full scale, and nothing here normalises that away behind the user.
@@ -47,6 +62,135 @@ const CONTROL_MODULATION: u8 = 1;
 const CONTROL_SUSTAIN: u8 = 64;
 const CONTROL_ALL_SOUND_OFF: u8 = 120;
 const CONTROL_ALL_NOTES_OFF: u8 = 123;
+
+/// What a wheel or a pressure sensor is wired to.
+///
+/// The DX7 assigns each of its controllers to pitch, amplitude or the envelope
+/// bias, independently. RF-7 offers the first two, which is what the wheel is
+/// used for in practice.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Target {
+    #[default]
+    Pitch,
+    Amplitude,
+    Both,
+}
+
+impl Target {
+    /// From the parameter schema's enum value.
+    pub const fn from_index(index: u32) -> Self {
+        match index {
+            1 => Self::Amplitude,
+            2 => Self::Both,
+            _ => Self::Pitch,
+        }
+    }
+
+    pub const fn index(self) -> u32 {
+        match self {
+            Self::Pitch => 0,
+            Self::Amplitude => 1,
+            Self::Both => 2,
+        }
+    }
+
+    const fn moves_pitch(self) -> bool {
+        matches!(self, Self::Pitch | Self::Both)
+    }
+
+    const fn moves_amplitude(self) -> bool {
+        matches!(self, Self::Amplitude | Self::Both)
+    }
+}
+
+/// Everything the player sets that is not part of a voice.
+///
+/// Some of this is the DX7's own function-parameter layer, which never lived
+/// in a cartridge. The rest — brightness, envelope time, velocity depth and the
+/// operator switches — the DX7 did not have as continuous controls, and RF-7
+/// adds them because a cartridge cannot be edited yet. Every one of them is
+/// neutral at its default, so a cartridge plays exactly as programmed until
+/// something is moved. `docs/MODEL.md` says which is which.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Controls {
+    /// How far the pitch wheel reaches, in semitones.
+    pub bend_semitones: f32,
+    pub master_tune_cents: f32,
+    pub transpose: i32,
+    pub wheel_range: f32,
+    pub wheel_target: Target,
+    pub aftertouch_range: f32,
+    pub aftertouch_target: Target,
+    /// Scales the modulation depth of every operator. 1.0 is the patch's own.
+    pub brightness: f32,
+    pub envelope_time: f32,
+    pub velocity_depth: f32,
+    /// Bit `i` set means OP(i+1) is heard.
+    pub operators: u8,
+}
+
+impl Default for Controls {
+    fn default() -> Self {
+        Self {
+            bend_semitones: BEND_SEMITONES_DEFAULT,
+            master_tune_cents: 0.0,
+            transpose: 0,
+            wheel_range: 1.0,
+            wheel_target: Target::Pitch,
+            aftertouch_range: 0.0,
+            aftertouch_target: Target::Pitch,
+            brightness: 1.0,
+            envelope_time: 1.0,
+            velocity_depth: 1.0,
+            operators: ALL_OPERATORS,
+        }
+    }
+}
+
+impl Controls {
+    /// Every field forced into the range the engine will act on. A caller that
+    /// validated already loses nothing; one that did not cannot break the
+    /// audio path with a stray value.
+    pub fn clamped(self) -> Self {
+        fn finite(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
+            if value.is_finite() {
+                value.clamp(low, high)
+            } else {
+                fallback
+            }
+        }
+        Self {
+            bend_semitones: finite(
+                self.bend_semitones,
+                0.0,
+                BEND_SEMITONES_MAX,
+                BEND_SEMITONES_DEFAULT,
+            ),
+            master_tune_cents: finite(self.master_tune_cents, -TUNE_CENTS_MAX, TUNE_CENTS_MAX, 0.0),
+            transpose: self.transpose.clamp(-TRANSPOSE_MAX, TRANSPOSE_MAX),
+            wheel_range: finite(self.wheel_range, 0.0, 1.0, 1.0),
+            aftertouch_range: finite(self.aftertouch_range, 0.0, 1.0, 0.0),
+            brightness: finite(self.brightness, 0.0, BRIGHTNESS_MAX, 1.0),
+            envelope_time: finite(
+                self.envelope_time,
+                ENVELOPE_TIME_MIN,
+                ENVELOPE_TIME_MAX,
+                1.0,
+            ),
+            velocity_depth: finite(self.velocity_depth, 0.0, VELOCITY_DEPTH_MAX, 1.0),
+            operators: self.operators & ALL_OPERATORS,
+            ..self
+        }
+    }
+
+    fn setup(&self) -> VoiceSetup {
+        VoiceSetup {
+            transpose: self.transpose,
+            envelope_time: self.envelope_time,
+            velocity_depth: self.velocity_depth,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EngineError {
@@ -77,10 +221,14 @@ pub struct Engine {
     lfo: Lfo,
     sample_rate: f32,
     gain: f64,
-    /// Semitones, from the pitch wheel.
-    bend: f32,
+    controls: Controls,
+    /// Where the pitch wheel sits, -1.0..=1.0. Held as a position rather than
+    /// as semitones so that widening the range moves a note already bent.
+    bend_position: f32,
     /// Modulation wheel, 0.0..=1.0.
     wheel: f32,
+    /// Channel pressure, 0.0..=1.0.
+    pressure: f32,
     /// One bit per MIDI channel.
     pedals: u16,
     /// Semitones of LFO pitch modulation at full depth.
@@ -108,8 +256,10 @@ impl Engine {
             lfo: Lfo::new(&patch.lfo, sample_rate),
             sample_rate,
             gain: DEFAULT_GAIN,
-            bend: 0.0,
+            controls: Controls::default(),
+            bend_position: 0.0,
             wheel: 0.0,
+            pressure: 0.0,
             pedals: 0,
             pitch_depth: 0.0,
             amp_depth: 0.0,
@@ -139,6 +289,17 @@ impl Engine {
 
     pub fn gain(&self) -> f64 {
         self.gain
+    }
+
+    /// Replace the whole control set. Values are clamped, never rejected: a
+    /// control is not an event, and refusing one would leave the engine in a
+    /// state the caller did not ask for and cannot see.
+    pub fn set_controls(&mut self, controls: Controls) {
+        self.controls = controls.clamped();
+    }
+
+    pub fn controls(&self) -> Controls {
+        self.controls
     }
 
     /// Replace the whole cartridge. Sounding notes keep the patch they began
@@ -197,7 +358,15 @@ impl Engine {
             self.lfo.key_down();
         }
         let slot = self.allocate();
-        self.voices[slot].start(&self.patch, channel, note, velocity, self.sample_rate);
+        let setup = self.controls.setup();
+        self.voices[slot].start(
+            &self.patch,
+            channel,
+            note,
+            velocity,
+            &setup,
+            self.sample_rate,
+        );
         self.sustained[slot] = false;
     }
 
@@ -251,7 +420,13 @@ impl Engine {
 
     /// `value` is -1.0..=1.0 across the whole wheel travel.
     pub fn pitch_bend(&mut self, _channel: u8, value: f64) {
-        self.bend = value.clamp(-1.0, 1.0) as f32 * BEND_SEMITONES;
+        self.bend_position = value.clamp(-1.0, 1.0) as f32;
+    }
+
+    /// Channel pressure, 0.0..=1.0. Its destination and how far it reaches are
+    /// both controls, and it does nothing until the range is opened.
+    pub fn channel_pressure(&mut self, _channel: u8, value: f64) {
+        self.pressure = value.clamp(0.0, 1.0) as f32;
     }
 
     /// Stop everything at once, with no release segment.
@@ -261,8 +436,9 @@ impl Engine {
         }
         self.sustained = [false; POLYPHONY];
         self.pedals = 0;
-        self.bend = 0.0;
+        self.bend_position = 0.0;
         self.wheel = 0.0;
+        self.pressure = 0.0;
         self.stolen = 0;
         self.lfo = Lfo::new(&self.patch.lfo, self.sample_rate);
     }
@@ -273,15 +449,39 @@ impl Engine {
 
     pub fn next_sample(&mut self) -> f32 {
         let modulation = self.lfo.advance();
-        let depth =
-            (f32::from(self.patch.lfo.pitch_mod_depth.min(99)) / 99.0 + self.wheel).min(1.0);
-        let pitch = self.bend + modulation * self.pitch_depth * depth;
-        // Amplitude modulation only ever takes level away, so the LFO is read
-        // as a unipolar dip rather than as a swing either side of the level.
-        let amplitude = self.amp_depth * (1.0 - modulation) * 0.5;
+        // Both controllers open the same two destinations, so they are summed
+        // per destination rather than each fighting for the whole depth.
+        let wheel = self.wheel * self.controls.wheel_range;
+        let pressure = self.pressure * self.controls.aftertouch_range;
+        let mut added_pitch = 0.0;
+        let mut added_amplitude = 0.0;
+        for (amount, target) in [
+            (wheel, self.controls.wheel_target),
+            (pressure, self.controls.aftertouch_target),
+        ] {
+            if target.moves_pitch() {
+                added_pitch += amount;
+            }
+            if target.moves_amplitude() {
+                added_amplitude += amount;
+            }
+        }
+        let pitch_depth =
+            (f32::from(self.patch.lfo.pitch_mod_depth.min(99)) / 99.0 + added_pitch).min(1.0);
+        let amplitude_depth = (self.amp_depth + added_amplitude).min(1.0);
+        let performance = Performance {
+            pitch: self.bend_position * self.controls.bend_semitones
+                + self.controls.master_tune_cents / 100.0
+                + modulation * self.pitch_depth * pitch_depth,
+            // Amplitude modulation only ever takes level away, so the LFO is
+            // read as a unipolar dip rather than a swing either side of it.
+            amplitude: amplitude_depth * (1.0 - modulation) * 0.5,
+            modulation: MODULATION_CYCLES * self.controls.brightness,
+            operators: self.controls.operators,
+        };
         let mut sum = 0.0;
         for voice in &mut self.voices {
-            sum += voice.next_sample(&self.sine, pitch, amplitude);
+            sum += voice.next_sample(&self.sine, &performance);
         }
         sum * self.gain as f32
     }
@@ -324,12 +524,23 @@ mod tests {
         Engine::new(48_000.0).expect("48 kHz is a supported rate")
     }
 
+    fn engine_with(controls: Controls) -> Engine {
+        let mut engine = engine();
+        engine.set_controls(controls);
+        engine
+    }
+
     fn render(engine: &mut Engine, samples: usize) -> Vec<f32> {
         (0..samples).map(|_| engine.next_sample()).collect()
     }
 
     fn peak(samples: &[f32]) -> f32 {
         samples.iter().fold(0.0f32, |peak, s| peak.max(s.abs()))
+    }
+
+    fn rms(samples: &[f32]) -> f32 {
+        let energy: f64 = samples.iter().map(|s| f64::from(*s) * f64::from(*s)).sum();
+        (energy / samples.len().max(1) as f64).sqrt() as f32
     }
 
     fn crossings(samples: &[f32]) -> usize {
@@ -493,6 +704,185 @@ mod tests {
         engine.pitch_bend(0, 0.0);
         let restored = crossings(&render(&mut engine, 24_000));
         assert!(restored < bent);
+    }
+
+    #[test]
+    fn out_of_range_controls_are_clamped_rather_than_refused() {
+        let mut engine = engine();
+        engine.set_controls(Controls {
+            bend_semitones: 99.0,
+            master_tune_cents: -400.0,
+            transpose: 100,
+            wheel_range: 5.0,
+            aftertouch_range: -1.0,
+            brightness: f32::NAN,
+            envelope_time: 0.0,
+            velocity_depth: f32::INFINITY,
+            operators: 0xff,
+            ..Controls::default()
+        });
+        let controls = engine.controls();
+        assert_eq!(controls.bend_semitones, BEND_SEMITONES_MAX);
+        assert_eq!(controls.master_tune_cents, -TUNE_CENTS_MAX);
+        assert_eq!(controls.transpose, TRANSPOSE_MAX);
+        assert_eq!(controls.wheel_range, 1.0);
+        assert_eq!(controls.aftertouch_range, 0.0);
+        assert_eq!(controls.brightness, 1.0, "a broken value falls back");
+        assert_eq!(controls.envelope_time, ENVELOPE_TIME_MIN);
+        assert_eq!(controls.velocity_depth, 1.0);
+        assert_eq!(controls.operators, ALL_OPERATORS);
+    }
+
+    #[test]
+    fn the_defaults_leave_a_cartridge_exactly_as_programmed() {
+        // Every added control is neutral where it starts, so this render and
+        // one through an engine that never heard of them must agree.
+        let mut plain = engine();
+        plain.select_program(0);
+        plain.note_on(0, 60, 100);
+        let reference = render(&mut plain, 12_000);
+
+        let mut set = engine();
+        set.set_controls(Controls::default());
+        set.select_program(0);
+        set.note_on(0, 60, 100);
+        assert_eq!(render(&mut set, 12_000), reference);
+    }
+
+    #[test]
+    fn the_bend_range_widens_a_note_that_is_already_bent() {
+        let mut engine = engine();
+        engine.select_program(6);
+        engine.note_on(0, 60, 100);
+        engine.pitch_bend(0, 1.0);
+        let two = crossings(&render(&mut engine, 24_000));
+        engine.set_controls(Controls {
+            bend_semitones: 12.0,
+            ..Controls::default()
+        });
+        let twelve = crossings(&render(&mut engine, 24_000));
+        assert!(
+            twelve > two,
+            "a wider range must reach further: {two} {twelve}"
+        );
+        engine.set_controls(Controls {
+            bend_semitones: 0.0,
+            ..Controls::default()
+        });
+        let none = crossings(&render(&mut engine, 24_000));
+        assert!(none < two, "a range of zero must not bend at all");
+    }
+
+    #[test]
+    fn master_tune_moves_the_whole_instrument() {
+        let mut flat = engine();
+        flat.set_controls(Controls {
+            master_tune_cents: -50.0,
+            ..Controls::default()
+        });
+        flat.select_program(6);
+        flat.note_on(0, 69, 100);
+        let low = crossings(&render(&mut flat, 96_000));
+
+        let mut sharp = engine();
+        sharp.set_controls(Controls {
+            master_tune_cents: 50.0,
+            ..Controls::default()
+        });
+        sharp.select_program(6);
+        sharp.note_on(0, 69, 100);
+        let high = crossings(&render(&mut sharp, 96_000));
+        assert!(high > low, "a semitone of tuning should be audible");
+    }
+
+    #[test]
+    fn aftertouch_does_nothing_until_its_range_is_opened() {
+        let mut engine = engine();
+        engine.select_program(0);
+        engine.note_on(0, 60, 100);
+        engine.channel_pressure(0, 1.0);
+        let closed = render(&mut engine, 12_000);
+
+        let mut open = engine_with(Controls {
+            aftertouch_range: 1.0,
+            aftertouch_target: Target::Pitch,
+            ..Controls::default()
+        });
+        open.select_program(0);
+        open.note_on(0, 60, 100);
+        open.channel_pressure(0, 1.0);
+        let moved = render(&mut open, 12_000);
+        assert_ne!(closed, moved, "an opened range should be heard");
+    }
+
+    #[test]
+    fn a_target_reaches_only_what_it_names() {
+        // Built here rather than taken from the factory bank: no factory voice
+        // sets an operator's amplitude modulation sensitivity, and a control
+        // that reaches nothing would prove nothing.
+        let mut voice = Voice::init();
+        voice.operators[0].amp_mod_sensitivity = 3;
+        voice.pitch_mod_sensitivity = 7;
+        let cartridge = Cartridge::from_voices([voice; VOICES_PER_CARTRIDGE]);
+        let sounded = |target: Target| {
+            let mut engine = engine_with(Controls {
+                wheel_target: target,
+                ..Controls::default()
+            });
+            engine.load_cartridge(cartridge);
+            engine.control_change(0, CONTROL_MODULATION, 1.0);
+            engine.note_on(0, 60, 100);
+            render(&mut engine, 24_000)
+        };
+        let pitch = sounded(Target::Pitch);
+        let amplitude = sounded(Target::Amplitude);
+        let both = sounded(Target::Both);
+        assert_ne!(pitch, amplitude, "the two destinations are not the same");
+        assert_ne!(pitch, both, "both must reach further than pitch alone");
+        assert_ne!(amplitude, both);
+        assert_eq!(Target::from_index(Target::Both.index()), Target::Both);
+        assert_eq!(Target::from_index(99), Target::Pitch);
+    }
+
+    #[test]
+    fn brightness_and_the_operator_switches_reach_the_output() {
+        let sounded = |controls: Controls| {
+            let mut engine = engine_with(controls);
+            engine.select_program(0);
+            engine.note_on(0, 60, 100);
+            render(&mut engine, 12_000)
+        };
+        let plain = sounded(Controls::default());
+        let bright = sounded(Controls {
+            brightness: 2.0,
+            ..Controls::default()
+        });
+        assert_ne!(plain, bright);
+        let silent = sounded(Controls {
+            operators: 0,
+            ..Controls::default()
+        });
+        assert_eq!(peak(&silent), 0.0, "no operator is heard");
+    }
+
+    #[test]
+    fn stretching_the_envelopes_makes_a_struck_note_ring_longer() {
+        // Half a second of a patch that decays to nothing on its own: the
+        // slower its envelopes run, the more of that half second still has
+        // sound in it. The exact factor is asserted on the envelope itself.
+        let ringing = |time: f32| {
+            let mut engine = engine_with(Controls {
+                envelope_time: time,
+                ..Controls::default()
+            });
+            engine.select_program(4); // RF MARIMBA.
+            engine.note_on(0, 60, 100);
+            rms(&render(&mut engine, 24_000))
+        };
+        let quick = ringing(1.0);
+        let slow = ringing(4.0);
+        assert!(quick > 0.0);
+        assert!(slow > quick * 1.5, "stretched to {slow} from {quick}");
     }
 
     #[test]
