@@ -2,6 +2,7 @@
 //! No audio device is opened and no existing file is overwritten.
 
 mod audition;
+mod calibration;
 mod package;
 mod wav;
 
@@ -17,7 +18,7 @@ use std::{
     time::Instant,
 };
 
-const HELP: &str = "RF-7 six-operator FM laboratory 0.1.4
+const HELP: &str = "RF-7 six-operator FM laboratory 0.1.5
 Usage:
   rf7-lab render --output PATH.wav [options]
   rf7-lab demo --output PATH.wav [--cartridge PATH.syx]
@@ -26,6 +27,7 @@ Usage:
   rf7-lab cartridge PATH.syx
   rf7-lab package
   rf7-lab audition [--prepare-only]
+  rf7-lab measure-index | calibrate | export-calibration   (see --help calibration)
 Render options:
   --program N       Program 1..128 (default 1)
   --note N          MIDI 0..127 (default 60, middle C)
@@ -67,8 +69,14 @@ fn dispatch(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         "cartridge" => describe_cartridge(&Options::for_cartridge(rest)?),
         "package" => package::build(),
         "audition" => audition::run(rest),
+        "measure-index" => calibration::measure(rest),
+        "calibrate" => calibration::calibrate(rest),
+        "export-calibration" => calibration::export(rest),
         "help" | "--help" | "-h" => {
             print!("{HELP}");
+            if rest.first().is_some_and(|topic| topic == "calibration") {
+                print!("{}", calibration::HELP);
+            }
             Ok(())
         }
         other => Err(format!("unknown command: {other}\n\n{HELP}").into()),
@@ -356,7 +364,11 @@ fn inspect(path: &Path) -> Result<(), Box<dyn Error>> {
         report.peak,
         report.rms
     );
-    println!("  every one of {} samples is finite", samples.len());
+    println!(
+        "  every one of {} samples is finite, {} channel(s)",
+        samples.len(),
+        report.channels
+    );
     if report.peak > 1.0 {
         println!("  note: the peak is above full scale; nothing was normalised");
     }

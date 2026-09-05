@@ -1,5 +1,20 @@
 # Roadmap
 
+## 0.1.5 — done
+
+- `rf7-analysis`: an FFT, the Bessel functions and an estimator that reads the
+  modulation index off a two-operator recording of any level, by fitting the
+  sideband pattern. Recovers a known index to within one per cent; refuses a
+  colliding ratio rather than averaging it.
+- The calibration voice and cartridge — OP2 at 4:1 into OP1, everything else
+  flat or silent, at thirty-two modulator levels — and `export-calibration`,
+  the first thing RF-7 writes to a `.syx`. Its own voices only.
+- `calibrate` measures RF-7 against itself; `measure-index` measures a
+  recording. The recording is the step that needs a real DX7 for five minutes.
+- The laboratory reads ordinary WAV files now: PCM at 16, 24 and 32 bits or
+  float, any channel count. The recordings that matter come from other
+  people's interfaces.
+
 ## 0.1.4 — done
 
 - A full factory cartridge: thirty-two voices written for RF-7 across most of
@@ -59,11 +74,11 @@
 
 ## Next, in the order that would improve the sound most
 
-1. **Measure the modulation index.** One number sets how bright the whole
-   instrument is, and it is currently a guess. Everything else in an FM patch is
-   a ratio hanging off it, so this is worth more than the rest of this list put
-   together. A recording of one operator modulating another at known output
-   levels, compared against RF-7 under the same patch, settles it.
+1. **Measure the modulation index.** The instrument to do it exists now;
+   what is missing is one recording of the calibration cartridge on a real
+   DX7. See [Calibration](CALIBRATION.md). Derive it independently from the
+   OPS chip's documented datapath, and if the two agree the ledger row is
+   settled.
 2. **The velocity table.** RF-7's curve is plausible and not measured. The
    instrument's is a table.
 3. **The envelope rate scale.** The quantisation is documented; the seconds each

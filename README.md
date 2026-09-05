@@ -55,6 +55,8 @@ cargo run --release -p rf7-lab -- render --output renders/tines.wav --program 1
 cargo run --release -p rf7-lab -- inspect renders/demo.wav
 cargo run --release -p rf7-lab -- cartridge cartridges/mine.syx
 cargo run --release -p rf7-lab -- stress
+cargo run --release -p rf7-lab -- calibrate
+cargo run --release -p rf7-lab -- export-calibration --output renders/rf7-calibration.syx
 ```
 
 Requires Rust 1.98 and a sibling RackForge checkout for its public SDK. See
@@ -67,6 +69,9 @@ overwritten.
   System Exclusive containers with their checksum. No audio, no I/O.
 - `rf7-dsp`: the 32 algorithms, the envelopes, the operators, the LFO and a
   sixteen-voice engine. No allocation, locks or I/O once constructed.
+- `rf7-analysis`: an FFT, Bessel functions and the modulation-index estimator,
+  with no dependencies. Reads the index off a two-operator recording of any
+  level.
 - `rf7-plugin`: the RackForge adapter, with MIDI 1.0 and 2.0, versioned state,
   and a program catalog built from the installed cartridge.
 - `rf7-lab`: rendering, WAV, JSON reports, cartridge inspection, packaging and
@@ -93,6 +98,8 @@ See [Cartridges](docs/CARTRIDGES.md).
 - [Roadmap](docs/ROADMAP.md): what is done, and what would improve the sound
   most, in that order.
 - [Cartridges](docs/CARTRIDGES.md): what RF-7 reads and how it is installed.
+- [Calibration](docs/CALIBRATION.md): how the modulation index gets measured,
+  and what a real DX7 has to record for it.
 - [Sources](docs/SOURCES.md): what the structure was written from.
 - [Development](docs/DEVELOPMENT.md): commands, integration and output formats.
 - [Desktop audition](docs/AUDITION.md): build, install and launch a test version.

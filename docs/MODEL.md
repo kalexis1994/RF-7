@@ -58,7 +58,7 @@ the 4064-unit range spans a little over 96 dB.
 
 | Mapping | Verdict | Note |
 | --- | --- | --- |
-| **Modulation index at unity gain: one cycle of phase deviation** | **Approximate — and the most consequential number here** | It sets how bright the entire instrument is. Everything else in an FM patch is a ratio; this is the scale they all hang from. `MODULATION_CYCLES` in `voice.rs`. |
+| **Modulation index at unity gain: one cycle of phase deviation** | **Approximate — and the most consequential number here** | It sets how bright the entire instrument is. Everything else in an FM patch is a ratio; this is the scale they all hang from. `MODULATION_CYCLES` in `voice.rs`. The instrument to measure it exists — see [Calibration](CALIBRATION.md) — and RF-7 measures itself at exactly 2π; what is still missing is a recording of a real DX7. |
 | Feedback level 0..7 as powers of two, 7 being full | **Approximate** | Averaged over the last two samples, which is what stops a feedback operator oscillating at the Nyquist frequency. |
 | LFO waveforms | Documented | Triangle, saw down, saw up, square, sine, sample and hold. The synced triangle starts at zero. |
 | LFO speed 0..99 to about 0.06..47 Hz | **Approximate** | Exponential between the two documented endpoints. The instrument's own curve is not exponential throughout. |

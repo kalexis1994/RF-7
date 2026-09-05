@@ -9,6 +9,7 @@
 //! RF-7; a user's own cartridges arrive at runtime as resource bytes.
 #![no_std]
 
+mod calibration;
 mod factory;
 mod library;
 mod packed;
@@ -16,6 +17,9 @@ mod parameters;
 mod sysex;
 mod unpacked;
 
+pub use calibration::{
+    calibration_cartridge, calibration_levels, calibration_library, calibration_voice,
+};
 pub use factory::{FACTORY_VOICES, factory_library, factory_voice};
 pub use library::{Library, MAX_VOICES, RAW_BANK_LENGTH, decode_library};
 pub use packed::{PACKED_VOICE_LENGTH, decode_packed, encode_packed};
