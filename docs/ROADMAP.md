@@ -1,5 +1,15 @@
 # Roadmap
 
+## 0.1.2 — done
+
+- Carriers are summed and divided by the operator count, so no single note can
+  leave a voice above full scale. Real cartridge patches run four or six
+  carriers near maximum, which the previous model turned into a chord peaking
+  at 2.47; this was found by playing a real ROM through it rather than by
+  reasoning about it.
+- The default gain is now chosen against those patches rather than against this
+  project's quieter factory voices.
+
 ## 0.1.1 — done
 
 - Seventeen parameters in four pages, checked against the package schema by a

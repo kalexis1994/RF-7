@@ -53,9 +53,11 @@ pub const VELOCITY_DEPTH_MAX: f32 = 2.0;
 /// Every operator heard.
 pub const ALL_OPERATORS: u8 = (1 << OPERATORS) - 1;
 
-/// Conservative by default: six carriers across sixteen voices can sum well
-/// past full scale, and nothing here normalises that away behind the user.
-const DEFAULT_GAIN: f64 = 0.2;
+/// Chosen against the loudest patches on a real cartridge rather than against
+/// this project's own quieter factory voices: a four-note chord of a
+/// four-carrier patch lands near −3 dBFS. Sixteen voices still sum past full
+/// scale, and nothing here normalises that away behind the user.
+pub const DEFAULT_GAIN: f64 = 0.3;
 pub const GAIN_MAX: f64 = 2.0;
 
 const CONTROL_MODULATION: u8 = 1;

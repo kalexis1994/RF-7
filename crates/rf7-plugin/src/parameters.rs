@@ -11,9 +11,9 @@
 //! control that sits on top of the loaded program, neutral at its default.
 
 use rf7_dsp::{
-    BEND_SEMITONES_DEFAULT, BEND_SEMITONES_MAX, BRIGHTNESS_MAX, Controls, ENVELOPE_TIME_MAX,
-    ENVELOPE_TIME_MIN, GAIN_MAX, OPERATORS, TRANSPOSE_MAX, TUNE_CENTS_MAX, Target,
-    VELOCITY_DEPTH_MAX,
+    BEND_SEMITONES_DEFAULT, BEND_SEMITONES_MAX, BRIGHTNESS_MAX, Controls, DEFAULT_GAIN,
+    ENVELOPE_TIME_MAX, ENVELOPE_TIME_MIN, GAIN_MAX, OPERATORS, TRANSPOSE_MAX, TUNE_CENTS_MAX,
+    Target, VELOCITY_DEPTH_MAX,
 };
 
 pub const GAIN: u32 = 0;
@@ -52,7 +52,7 @@ pub struct Parameter {
 }
 
 pub const PARAMETERS: [Parameter; COUNT] = [
-    float("gain", 0.0, GAIN_MAX, 0.2),
+    float("gain", 0.0, GAIN_MAX, DEFAULT_GAIN),
     integer(
         "bend_range",
         0.0,
@@ -200,6 +200,14 @@ mod tests {
                 parameter.id
             );
         }
+    }
+
+    #[test]
+    fn the_declared_gain_default_is_the_engines_own() {
+        // Two places could disagree about where the level starts, and the
+        // schema test only compares this table against the package.
+        let engine = rf7_dsp::Engine::new(48_000.0).expect("a supported rate");
+        assert_eq!(defaults()[GAIN as usize], engine.gain());
     }
 
     #[test]

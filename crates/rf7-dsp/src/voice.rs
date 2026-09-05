@@ -12,6 +12,22 @@ use crate::{
 };
 use rf7_voice::Voice;
 
+/// What the summed carriers are divided by before they leave a voice.
+///
+/// Without this an algorithm with six carriers is six times louder than one
+/// with a single carrier, and every real cartridge runs its carriers near
+/// maximum: four carriers at output level 99 is ordinary, not extreme. The
+/// instrument cannot work that way either — its operator sum reaches a
+/// fixed-width accumulator and a 12-bit converter, so six operators at full
+/// have to fit. Dividing by the operator count is that constraint: six
+/// carriers at full scale is exactly full scale, and no single note can leave
+/// a voice above it.
+///
+/// The algorithm still decides how loud a patch is, because a two-carrier
+/// algorithm reaches a third of what a six-carrier one does. What is *not*
+/// measured is whether the hardware's own scaling is exactly this.
+pub const CARRIER_SCALE: f32 = 1.0 / OPERATORS as f32;
+
 /// Phase deviation, in cycles, produced by a modulator running at unity gain.
 ///
 /// This is the single constant that decides how bright the whole instrument
@@ -275,7 +291,7 @@ impl NoteVoice {
         if !audible {
             self.active = false;
         }
-        sum
+        sum * CARRIER_SCALE
     }
 }
 
@@ -413,6 +429,29 @@ mod tests {
         voice.silence();
         assert!(!voice.is_active());
         assert_eq!(voice.next_sample(&sine, &performance), 0.0);
+    }
+
+    #[test]
+    fn no_single_note_can_leave_a_voice_above_full_scale() {
+        // Algorithm 32 with every operator at its maximum is the loudest a
+        // voice can be: six carriers, nothing held back. A real cartridge does
+        // very nearly this, so it is the case that has to fit.
+        let mut patch = Voice::init();
+        patch.algorithm = 31;
+        patch.feedback = 7;
+        for operator in &mut patch.operators {
+            operator.output_level = 99;
+            operator.eg_level = [99, 99, 99, 0];
+            operator.eg_rate = [99, 99, 99, 99];
+        }
+        let loudest = peak(&render(&patch, 60, 127, 24_000));
+        assert!(loudest <= 1.0, "six carriers reached {loudest}");
+        assert!(loudest > 0.8, "and should very nearly fill the scale");
+
+        // Two carriers of the same operators reach a third of it.
+        patch.algorithm = 0;
+        let pair = peak(&render(&patch, 60, 127, 24_000));
+        assert!(pair < loudest, "the algorithm still decides the level");
     }
 
     #[test]

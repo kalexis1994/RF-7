@@ -18,7 +18,7 @@ use std::{
     time::Instant,
 };
 
-const HELP: &str = "RF-7 six-operator FM laboratory 0.1.1
+const HELP: &str = "RF-7 six-operator FM laboratory 0.1.2
 Usage:
   rf7-lab render --output PATH.wav [options]
   rf7-lab demo --output PATH.wav [--cartridge PATH.syx]

@@ -41,6 +41,7 @@ the 4064-unit range spans a little over 96 dB.
 | Keyboard level scaling: break point, two depths, four curves | Documented | Break point anchored 17 semitones up the MIDI scale, groups of three semitones, the published exponential table. The anchor in particular deserves a measurement. |
 | Velocity sensitivity 0..7 | **Approximate** | RF-7 uses a concave curve reaching about 29 dB of range at sensitivity 7, and zero at velocity 127 for every sensitivity. The instrument's own velocity table has not been transcribed. |
 | Amplitude modulation sensitivity 0..3 | **Approximate** | Modelled as 0, ¼, ½ and all of a 24 dB dip. |
+| Carriers are summed and divided by six | **Approximate, but constrained** | The instrument's operator sum reaches a fixed-width accumulator and a 12-bit converter, so six operators at full have to fit: dividing by the operator count is that constraint rather than a taste decision. Whether the hardware's own scaling is exactly this has not been measured. Without it a four-carrier patch — which is ordinary on a real cartridge, not extreme — is four times louder than a single-carrier one and clips on any chord. |
 
 ## Envelopes
 
