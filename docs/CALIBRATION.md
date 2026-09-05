@@ -62,9 +62,13 @@ cartridge, rendered offline through the same estimator. The two tables side by
 side are the calibration. Where they differ at level 99 is the modulation
 index; where they differ in shape is the level curve.
 
-Today `calibrate` at level 99 reports 2π radians — one cycle — because that is
-what `MODULATION_CYCLES` is set to. That is RF-7's claim, not a measurement of
-the DX7.
+`calibrate` at level 99 reports 13.12 radians — 2^(17/16) cycles — because
+that is what `MODULATION_CYCLES` is set to. It is not a guess any more: it was
+derived from the OPS datapath and the firmware's constant velocity term, and it
+matches the value the literature gives. See the derivation in the model
+ledger. A recording would confirm it to the last per cent, and would settle the
+one thing the derivation cannot: whether the real instrument's level curve
+departs from its tables anywhere.
 
 ## What is asserted
 

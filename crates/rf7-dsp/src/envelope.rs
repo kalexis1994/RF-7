@@ -7,8 +7,8 @@
 //! engine treats that as the instrument does: the voice stays busy.
 
 use crate::tables::{
-    LEVEL_FULL, LEVEL_SILENT, key_rate_offset, level_gain, quantised_rate, rate_units_per_second,
-    rising_step, scale_output_level,
+    LEVEL_FULL, LEVEL_HEADROOM, LEVEL_SILENT, key_rate_offset, level_gain, quantised_rate,
+    rate_units_per_second, rising_step, scale_output_level,
 };
 use rf7_voice::Operator;
 
@@ -63,7 +63,7 @@ impl Envelope {
         sample_rate: f32,
     ) -> Self {
         let key_rate = key_rate_offset(note, operator.rate_scaling);
-        let ceiling = ceiling.clamp(0.0, LEVEL_FULL);
+        let ceiling = ceiling.clamp(0.0, LEVEL_FULL + LEVEL_HEADROOM);
         let seconds = sample_rate * time_scale.max(f32::MIN_POSITIVE);
         let mut targets = [0.0; SEGMENTS];
         let mut steps = [0.0; SEGMENTS];
@@ -71,7 +71,8 @@ impl Envelope {
             let programmed = scale_output_level(operator.eg_level[segment]) as f32 * 32.0;
             // A segment level is a fraction of the operator's own ceiling, so
             // an operator turned down keeps the shape of its envelope.
-            targets[segment] = (ceiling - (LEVEL_FULL - programmed)).clamp(0.0, LEVEL_FULL);
+            targets[segment] =
+                (ceiling - (LEVEL_FULL - programmed)).clamp(0.0, LEVEL_FULL + LEVEL_HEADROOM);
             let quantised = quantised_rate(operator.eg_rate[segment], key_rate);
             steps[segment] = rate_units_per_second(quantised) / seconds;
         }

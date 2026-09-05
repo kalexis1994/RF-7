@@ -5,9 +5,10 @@
 //! own calibration voice, so what is under test is the engine's modulation
 //! depth — and that is the number every patch in the bank hangs from.
 
-use core::f64::consts::{PI, TAU};
+use core::f64::consts::TAU;
 use rf7_analysis::{AnalysisError, estimate_index, spectrum};
 use rf7_dsp::Engine;
+use rf7_dsp::MODULATION_CYCLES;
 use rf7_voice::{Library, calibration_voice};
 
 const RATE: f64 = 48_000.0;
@@ -99,19 +100,24 @@ fn render_calibration(level: u8) -> Vec<f32> {
 }
 
 #[test]
-fn rf7_at_full_modulator_level_deviates_by_exactly_one_cycle() {
-    // MODULATION_CYCLES is 1.0: a modulator at unity gain swings the carrier
-    // by one cycle, which is 2π radians of index. This is the engine's own
-    // claim, measured the same way a real DX7 will be.
+fn rf7_at_full_modulator_level_reaches_the_instruments_index() {
+    // π·2^(33/16) = 13.12 radians, derived from the OPS datapath and the
+    // firmware's constant velocity term. This is the engine's claim, measured
+    // the same way a real DX7 recording will be.
+    let expected = TAU * f64::from(MODULATION_CYCLES);
+    assert!(
+        (expected - 13.123).abs() < 0.01,
+        "the constant is {expected}"
+    );
     let estimate = estimate_index(
         &spectrum(&render_calibration(99), RATE),
         CARRIER,
         MODULATOR,
-        8,
+        10,
     )
     .unwrap();
     assert!(
-        (estimate.beta - TAU).abs() < 0.05,
+        (estimate.beta - expected).abs() < 0.05,
         "the engine's index at level 99 is {} (residual {})",
         estimate.beta,
         estimate.residual
@@ -132,12 +138,11 @@ fn the_engines_level_curve_is_the_one_its_tables_declare() {
             6,
         )
         .unwrap();
-        let expected = TAU * expected_gain;
+        let expected = TAU * expected_gain * f64::from(MODULATION_CYCLES);
         assert!(
             (estimate.beta - expected).abs() < expected * 0.03 + 0.01,
             "level {level}: measured {} against {expected}",
             estimate.beta
         );
     }
-    let _ = PI;
 }

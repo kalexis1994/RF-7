@@ -12,8 +12,10 @@ and compiles to a portable RackForge WASM plugin.
 is taken from documented behaviour and asserted in tests. Several of the curves
 that turn a panel number into a frequency or a slope are RF-7's own
 approximations, and [the model ledger](docs/MODEL.md) says which is which,
-one line per mapping. The largest open question is the modulation index, the one
-constant that sets how bright the whole instrument is.
+one line per mapping. The modulation index — the one constant that sets how
+bright the whole instrument is — is derived from the chip's datapath and the
+firmware and matches the literature; a recording would confirm the last per
+cent.
 
 **No voice data ships here.** The thirty-two factory voices were written for RF-7.
 The voices a DX7 shipped with are Yamaha's; RF-7 plays a cartridge you supply.

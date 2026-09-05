@@ -20,7 +20,7 @@ mod voice;
 pub use algorithm::{ALGORITHMS, Algorithm};
 pub use envelope::Envelope;
 pub use sine::Sine;
-pub use tables::LEVEL_FULL;
+pub use tables::{LEVEL_FULL, LEVEL_HEADROOM};
 pub use voice::{MODULATION_CYCLES, NoteVoice, Performance, VoiceSetup};
 
 use lfo::Lfo;

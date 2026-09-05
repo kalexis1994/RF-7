@@ -14,19 +14,38 @@ use rf7_voice::{Curve, Operator};
 
 /// Units of the logarithmic level scale per doubling of amplitude.
 pub const LEVEL_UNITS_PER_OCTAVE: f32 = 256.0;
-/// Unity gain. 127 scaled output-level steps of 32 units each.
+/// Unity gain. 127 scaled output-level steps of 32 units each. This is the
+/// level of an operator at output level 99 with velocity sensitivity 0 — the
+/// firmware's reference, fifteen sixteenths of an octave under the hardware.
 pub const LEVEL_FULL: f32 = 4064.0;
-/// Below this the operator is inaudible; holding it at zero keeps silence
-/// exactly silent instead of leaving a denormal trickling through the mix.
-pub const LEVEL_SILENT: f32 = 0.0;
+/// How far above [`LEVEL_FULL`] a level may go. The firmware clamps every
+/// operator's attenuation byte at 4 sixteenths, and the reference sits at 15,
+/// so a velocity-sensitive operator played hard has eleven sixteenths of an
+/// octave in hand above the reference. That is the instrument's headroom,
+/// and a note that uses all of it on every carrier can leave a voice above
+/// full scale — which is left visible rather than normalised away.
+pub const LEVEL_HEADROOM: f32 = 11.0 * LEVEL_UNITS_PER_OCTAVE / 16.0;
+/// Below this the operator is inaudible and is treated as silent outright.
+///
+/// Envelope level 0 is 127 scaled steps under the operator's ceiling, and a
+/// velocity-sensitive operator's ceiling can sit up to [`LEVEL_HEADROOM`]
+/// above the reference — so its level 0 lands that far above zero units.
+/// That is ninety decibels below the reference, which is silence by any
+/// measure, and a voice that waited for exactly zero would never be freed.
+pub const LEVEL_SILENT: f32 = LEVEL_HEADROOM;
 
 /// The rising part of an envelope slows as it approaches the top. The ceiling
 /// sits above [`LEVEL_FULL`] so the last of the attack still moves.
 const ATTACK_CEILING: f32 = 4935.0;
 /// Level units per second at the slowest quantised rate.
 const RATE_BASE_UNITS: f32 = 64.0;
-/// Level units lost per step of velocity sensitivity at zero velocity.
-const VELOCITY_UNITS_PER_STEP: f32 = 176.0;
+/// One sixteenth of an octave, which is the unit the firmware's velocity
+/// term is counted in, expressed in level units.
+const SIXTEENTH_OCTAVE: f32 = LEVEL_UNITS_PER_OCTAVE / 16.0;
+/// The velocity term at sensitivity 0, which the firmware applies to every
+/// operator regardless of velocity. It is the reference the others are
+/// measured from, and it is where the modulation index gets its 2^(−15/16).
+const VELOCITY_REFERENCE: i32 = 15;
 /// Where a break point of 0 sits on the MIDI scale.
 const BREAK_POINT_ANCHOR: i32 = 17;
 /// One detune step, in octaves. About 1.7 cents.
@@ -120,18 +139,44 @@ pub fn level_gain(units: f32) -> f32 {
     if units <= LEVEL_SILENT {
         return 0.0;
     }
-    ((units.min(LEVEL_FULL) - LEVEL_FULL) / LEVEL_UNITS_PER_OCTAVE).exp2()
+    ((units.min(LEVEL_FULL + LEVEL_HEADROOM) - LEVEL_FULL) / LEVEL_UNITS_PER_OCTAVE).exp2()
 }
 
-/// Level units removed by a key struck below full force.
+/// Level units a key's velocity adds or removes, as the DX7's firmware does it.
 ///
-/// Zero at velocity 127 for every sensitivity: velocity takes level away, it
-/// never adds any, which is why a sensitive patch still reaches its programmed
-/// output level when played hard.
+/// Two tables from the v1.8 ROM. `MIDI_VELOCITY` turns the MIDI value into
+/// the instrument's own, which runs the other way: 127 becomes 0. That then
+/// indexes `VELOCITY_SCALE`, and the firmware computes, in sixteenths of an
+/// octave of attenuation,
+///
+/// ```text
+/// ((sensitivity × 32 × VELOCITY_SCALE[v]) >> 8) + (15 − 2 × sensitivity)
+/// ```
+///
+/// At sensitivity 0 that is the constant 15 for every velocity, so velocity
+/// does nothing — and that constant is taken as the zero here, because it is
+/// already inside [`crate::MODULATION_CYCLES`]. A sensitive operator played
+/// hard comes out *above* it: at sensitivity 7 and velocity 127 the term is 1,
+/// fourteen sixteenths — very nearly an octave — over the reference. That is
+/// the instrument, not a rounding: sensitivity buys more level at the top as
+/// well as much less at the bottom, and [`LEVEL_HEADROOM`] is what lets the
+/// top through.
 pub fn velocity_offset(velocity: u8, sensitivity: u8) -> f32 {
-    let normalised = f32::from(velocity.min(127)) / 127.0;
-    let response = normalised * (2.0 - normalised);
-    -(1.0 - response) * f32::from(sensitivity.min(7)) * VELOCITY_UNITS_PER_STEP
+    const MIDI_VELOCITY: [u8; 32] = [
+        0x6e, 0x64, 0x5a, 0x55, 0x50, 0x4b, 0x46, 0x41, 0x3a, 0x36, 0x32, 0x2e, 0x2a, 0x26, 0x22,
+        0x1e, 0x1c, 0x1a, 0x18, 0x16, 0x14, 0x12, 0x10, 0x0e, 0x0c, 0x0a, 0x08, 0x06, 0x04, 0x02,
+        0x01, 0x00,
+    ];
+    const VELOCITY_SCALE: [u8; 32] = [
+        0x00, 0x04, 0x0c, 0x15, 0x1e, 0x28, 0x2e, 0x34, 0x3a, 0x40, 0x46, 0x4c, 0x52, 0x58, 0x5e,
+        0x64, 0x67, 0x6a, 0x6d, 0x70, 0x72, 0x74, 0x76, 0x78, 0x7a, 0x7c, 0x7e, 0x80, 0x82, 0x83,
+        0x84, 0x85,
+    ];
+    let sensitivity = i32::from(sensitivity.min(7));
+    let internal = MIDI_VELOCITY[usize::from(velocity.min(127) >> 2)];
+    let scale = i32::from(VELOCITY_SCALE[usize::from(internal >> 2)]);
+    let attenuation = ((sensitivity * 32 * scale) >> 8) + (15 - 2 * sensitivity);
+    (VELOCITY_REFERENCE - attenuation) as f32 * SIXTEENTH_OCTAVE
 }
 
 /// The frequency ratio of a key-tracking operator.
@@ -207,21 +252,39 @@ mod tests {
         assert_eq!(scale_output_level(200), 127);
         assert_eq!(level_gain(LEVEL_FULL), 1.0);
         assert_eq!(level_gain(0.0), 0.0);
-        assert!(level_gain(LEVEL_FULL + 1000.0) <= 1.0);
+        // Above the reference there is the firmware's eleven sixteenths of
+        // headroom, and no more.
+        let ceiling = (11.0f32 / 16.0).exp2();
+        assert!((level_gain(LEVEL_FULL + LEVEL_HEADROOM) - ceiling).abs() < 1e-5);
+        assert!((level_gain(LEVEL_FULL + 1000.0) - ceiling).abs() < 1e-5);
         let half = level_gain(LEVEL_FULL - LEVEL_UNITS_PER_OCTAVE);
         assert!((half - 0.5).abs() < 1e-6);
     }
 
     #[test]
-    fn velocity_only_ever_takes_level_away() {
-        for sensitivity in 0..=7 {
-            assert_eq!(velocity_offset(127, sensitivity), 0.0);
-            for velocity in 0..=127 {
-                assert!(velocity_offset(velocity, sensitivity) <= 0.0);
-            }
-            assert!(velocity_offset(1, sensitivity) <= velocity_offset(100, sensitivity));
+    fn the_velocity_curve_is_the_firmwares() {
+        // Sensitivity 0: the constant 15, so nothing moves with velocity.
+        for velocity in 0..=127 {
+            assert_eq!(velocity_offset(velocity, 0), 0.0);
         }
-        assert_eq!(velocity_offset(0, 0), 0.0);
+        for sensitivity in 1..=7 {
+            // Never louder for a softer key.
+            for velocity in 1..=127u8 {
+                assert!(
+                    velocity_offset(velocity - 1, sensitivity)
+                        <= velocity_offset(velocity, sensitivity)
+                );
+            }
+            assert!(velocity_offset(0, sensitivity) < 0.0);
+        }
+        // Sensitivity 7 at full velocity: the MIDI table gives 0, the scale
+        // table gives 0, so the term is 15 − 14 = 1: fourteen sixteenths
+        // above the reference. Three of those are beyond the headroom.
+        assert_eq!(velocity_offset(127, 7), 14.0 * SIXTEENTH_OCTAVE);
+        assert!(velocity_offset(127, 7) > LEVEL_HEADROOM);
+        // And at velocity 0: index 0x6e>>2 = 27, scale 0x80: (7·32·128)>>8 + 1
+        // = 113, ninety-eight sixteenths below it — six octaves and a bit.
+        assert_eq!(velocity_offset(0, 7), -98.0 * SIXTEENTH_OCTAVE);
         assert!(velocity_offset(0, 7) < velocity_offset(0, 1));
     }
 

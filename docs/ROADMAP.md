@@ -1,5 +1,14 @@
 # Roadmap
 
+## 0.1.6 — done
+
+- The modulation index is derived, not guessed: 2^(17/16) cycles at level 99,
+  from the OPS datapath and a constant in the firmware, matching the
+  literature. RF-7 was half as bright as the instrument before this.
+- The velocity curve is the firmware's: two tables and one line of arithmetic,
+  located in the user's own ROM dumps, with the instrument's own headroom.
+- The output level table is confirmed byte for byte in the ROM.
+
 ## 0.1.5 — done
 
 - `rf7-analysis`: an FFT, the Bessel functions and an estimator that reads the
@@ -74,13 +83,12 @@
 
 ## Next, in the order that would improve the sound most
 
-1. **Measure the modulation index.** The instrument to do it exists now;
-   what is missing is one recording of the calibration cartridge on a real
-   DX7. See [Calibration](CALIBRATION.md). Derive it independently from the
-   OPS chip's documented datapath, and if the two agree the ledger row is
-   settled.
-2. **The velocity table.** RF-7's curve is plausible and not measured. The
-   instrument's is a table.
+1. **Confirm the modulation index with a recording.** It is derived and
+   three sources agree; a recording of the calibration cartridge on a real
+   DX7 would close the last per cent and check the level curve end to end.
+   See [Calibration](CALIBRATION.md).
+2. **Revisit the factory bank** now that the index has doubled: every patch
+   was designed against the old value.
 3. **The envelope rate scale.** The quantisation is documented; the seconds each
    quantised rate takes are not, at either end.
 4. **The pitch envelope curve**, which is currently a quadratic standing in for

@@ -19,6 +19,23 @@ fact about the hardware, and the fact was then re-expressed in RF-7's own terms.
   <https://www.righto.com/2021/12/yamaha-dx7-chip-reverse-engineering.html> and
   <https://www.righto.com/2021/11/reverse-engineering-yamaha-dx7.html>
 
+## The firmware
+
+- AJXS's annotated disassembly of the v1.8 ROM,
+  <https://github.com/ajxs/yamaha_dx7_rom_disassembly>. Read for the operator
+  level table (`TABLE_LOG`), the two velocity tables and the arithmetic that
+  joins them, the keyboard scaling curve, and the constant the firmware adds
+  to every operator's level. Every table used from it was located byte for
+  byte in the user's own ROM dumps before it was trusted.
+- Ken Shirriff's die analysis of the OPS, parts I–VI, for the 12-bit sine
+  index, the 14-bit operator output and the 15-bit output word:
+  <https://www.righto.com/2021/11/reverse-engineering-yamaha-dx7.html>
+- Caspe, McPherson and Sandler, *DDX7: Differentiable FM Synthesis of Musical
+  Instrument Sounds* (2022), for an independent statement of the instrument's
+  maximum index: <https://arxiv.org/abs/2208.06169>
+- Chowning and Bristow, *FM Theory and Applications* (Yamaha, 1986), reported
+  as the source of the π·2^(33/16) figure. Not consulted directly.
+
 ## Voice data and System Exclusive
 
 - The DX7 System Exclusive specification: the 155-parameter unpacked voice, the

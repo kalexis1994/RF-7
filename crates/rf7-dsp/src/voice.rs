@@ -28,12 +28,24 @@ use rf7_voice::Voice;
 /// measured is whether the hardware's own scaling is exactly this.
 pub const CARRIER_SCALE: f32 = 1.0 / OPERATORS as f32;
 
-/// Phase deviation, in cycles, produced by a modulator running at unity gain.
+/// Phase deviation, in cycles, produced by a modulator at output level 99.
 ///
-/// This is the single constant that decides how bright the whole instrument
-/// is, and the one most worth measuring against a real DX7. Everything else in
-/// an FM patch is a ratio; this is the scale.
-pub const MODULATION_CYCLES: f32 = 1.0;
+/// Derived, not tuned, from three things that agree:
+///
+/// - The OPS chip adds an operator's 14-bit output magnitude straight onto
+///   its 12-bit sine index (4096 per cycle), so a full-scale operator swings
+///   the next one by four cycles.
+/// - The firmware never sends full scale. Its velocity term at sensitivity 0
+///   is the constant 15, in sixteenths of an octave, applied to every
+///   operator at every level — read from `VOICE_ADD_LOAD_OPERATOR_DATA_TO_EGS`
+///   in the v1.8 ROM. Level 99 therefore reaches 4 × 2^(−15/16) cycles.
+/// - That is 2^(17/16) = 2.0887 cycles, or π·2^(33/16) = 13.12 radians: the
+///   maximum index the literature quotes for the DX7, and within four per
+///   cent of the 4π the DDX7 paper gives as its ceiling.
+///
+/// It was 1.0 before this, which is why 0.1.5 and earlier are half as bright
+/// as the instrument. `rf7-lab calibrate` measures the engine at this value.
+pub const MODULATION_CYCLES: f32 = 2.088_726_6;
 
 /// What the engine's controls contribute to a note as it starts.
 ///
@@ -433,9 +445,11 @@ mod tests {
 
     #[test]
     fn no_single_note_can_leave_a_voice_above_full_scale() {
-        // Algorithm 32 with every operator at its maximum is the loudest a
-        // voice can be: six carriers, nothing held back. A real cartridge does
-        // very nearly this, so it is the case that has to fit.
+        // Algorithm 32 with every operator at output level 99 and no velocity
+        // sensitivity is the firmware's reference loudness: six carriers,
+        // nothing held back. A real cartridge does very nearly this, so it is
+        // the case that has to fit. (Velocity sensitivity can add up to eleven
+        // sixteenths of an octave above this, and that is left visible.)
         let mut patch = Voice::init();
         patch.algorithm = 31;
         patch.feedback = 7;
