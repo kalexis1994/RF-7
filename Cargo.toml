@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["crates/rf7-voice", "crates/rf7-dsp", "crates/rf7-plugin", "tools/rf7-lab"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+rf7-voice = { path = "crates/rf7-voice" }
+rf7-dsp = { path = "crates/rf7-dsp" }
+serde_json = "1.0"
+# Development checkout, deliberately explicit. See docs/DEVELOPMENT.md.
+rackforge-plugin-sdk = { path = "../rackforge/crates/rackforge-plugin-sdk" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

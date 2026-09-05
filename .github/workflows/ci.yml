@@ -1,0 +1,49 @@
+name: Rust quality
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: RF-7
+    steps:
+      - name: Check out RF-7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: RF-7
+          persist-credentials: false
+      - name: Check out the compatible SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: kalexis1994/rackforge
+          ref: 7c17bd4a480d1c0bd7fa18fa4d880e82429dffe1
+          path: rackforge
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check lints
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Test the model, the engine and the plugin contract
+        run: cargo test --locked --workspace
+      - name: Build the laboratory
+        run: cargo build --locked --release --workspace
+      - name: Build the portable plugin
+        run: cargo build --locked --release --target wasm32-unknown-unknown -p rf7-plugin
+      - name: Render a reference
+        run: cargo run --locked --release -p rf7-lab -- render --output renders/ci.wav --seconds 0.5 --hold 0.2
+      - name: Verify the reference file
+        run: cargo run --locked --release -p rf7-lab -- inspect renders/ci.wav
+      - name: Render every factory voice
+        run: cargo run --locked --release -p rf7-lab -- demo --output renders/ci-demo.wav
+      - name: Measure the sixteen-voice load
+        run: cargo run --locked --release -p rf7-lab -- stress

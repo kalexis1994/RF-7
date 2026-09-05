@@ -1,0 +1,32 @@
+# Schema 1 intentionally uses RackForge's generic identity during engine
+# research. A branded schema 3 package follows once product artwork exists.
+schema_version = 1
+id = "org.rackforge.rf7"
+name = "RF-7 Research"
+vendor = "RackForge"
+version = "0.1.0"
+description = "Six-operator FM instrument: the 32 algorithms, the four-segment envelopes and the cartridges you already own"
+kind = "instrument"
+state_version = 1
+capabilities = ["audio_output", "midi_input", "presets", "state"]
+ui_layouts = ["little@1"]
+
+[api]
+major = 1
+minor = 11
+
+# No voice data is shipped. The user installs a cartridge they own, and its
+# thirty-two voices become the plugin's thirty-two programs.
+[[resources]]
+id = "cartridge"
+name = "Voice Cartridge"
+kind = "file"
+required = false
+data_path = "cartridges/current.syx"
+
+[component]
+abi = "wasm-v1"
+path = "component.wasm"
+runtime_descriptor = "metadata/runtime.json"
+parameter_schema = "metadata/parameters.json"
+preset_catalog = "metadata/presets.json"

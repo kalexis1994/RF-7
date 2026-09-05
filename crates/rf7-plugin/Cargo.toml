@@ -1,0 +1,18 @@
+[package]
+name = "rf7-plugin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rf7-dsp.workspace = true
+rf7-voice.workspace = true
+rackforge-plugin-sdk.workspace = true
+
+# The SDK export macro implements the raw ABI. Handwritten code is safe Rust.
+[lints.clippy]
+all = "warn"

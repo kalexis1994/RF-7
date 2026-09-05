@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "pages": [{ "id": "output", "name": "Output", "order": 0 }],
+  "parameters": [{
+    "index": 0, "id": "gain", "name": "Output Gain", "page": "output", "order": 0,
+    "kind": { "type": "float", "minimum": 0.0, "maximum": 2.0, "default": 0.2, "step": 0.01, "unit": "x" },
+    "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+    "suggested_control": "knob"
+  }]
+}

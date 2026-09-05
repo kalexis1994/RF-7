@@ -1,0 +1,6 @@
+/target/
+/dist/
+/renders/
+/cartridges/
+/.cargo/config.toml
+/package/component.wasm
