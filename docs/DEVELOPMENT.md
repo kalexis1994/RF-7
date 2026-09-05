@@ -29,7 +29,17 @@ cargo run --release -p rf7-lab -- demo --output renders/demo.wav
 cargo run --release -p rf7-lab -- inspect renders/demo.wav
 cargo run --release -p rf7-lab -- stress
 cargo run --release -p rf7-lab -- cartridge cartridges/mine.syx
+cargo run --release -p rf7-lab -- report --cartridge cartridges/mine.syx
+cargo run --release -p rf7-lab -- brightness --program 9 --against cartridges/mine.syx --against-program 11
 ```
+
+`report` lists every voice's operators with their role, level and modulation
+index, and summarises the library's distribution: run over a real cartridge it
+is a portrait of how the instrument's designers set their modulators, which is
+the calibration a hand-written bank has short of ears. `brightness` renders a
+note of one voice — and optionally one from another library — and prints the
+spectral centroid and peak over the attack and the body, so two voices can be
+compared for brightness without listening.
 
 `--help` lists every render option. Output files use create-new semantics:
 choose a new name to rerun, because nothing here overwrites. Each render also

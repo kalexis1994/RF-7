@@ -134,6 +134,16 @@ pub fn rising_step(level: f32, units: f32) -> f32 {
     units * ((ATTACK_CEILING - level) / ATTACK_CEILING).max(0.0)
 }
 
+/// The modulation index, in radians, that an operator at this output level
+/// produces in the operator it feeds — at full envelope, velocity
+/// sensitivity 0, no keyboard scaling. What a patch designer is choosing
+/// when they set a modulator's level.
+pub fn modulation_index_at_level(level: u8) -> f32 {
+    core::f32::consts::TAU
+        * crate::MODULATION_CYCLES
+        * level_gain(scale_output_level(level) as f32 * 32.0)
+}
+
 /// Level units to linear gain.
 pub fn level_gain(units: f32) -> f32 {
     if units <= LEVEL_SILENT {

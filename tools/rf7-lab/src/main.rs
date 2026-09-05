@@ -2,8 +2,10 @@
 //! No audio device is opened and no existing file is overwritten.
 
 mod audition;
+mod brightness;
 mod calibration;
 mod package;
+mod report;
 mod wav;
 
 use rf7_dsp::{Engine, POLYPHONY, SAMPLE_RATE_MAX, SAMPLE_RATE_MIN};
@@ -18,13 +20,15 @@ use std::{
     time::Instant,
 };
 
-const HELP: &str = "RF-7 six-operator FM laboratory 0.1.6
+const HELP: &str = "RF-7 six-operator FM laboratory 0.1.7
 Usage:
   rf7-lab render --output PATH.wav [options]
   rf7-lab demo --output PATH.wav [--cartridge PATH.syx]
   rf7-lab stress [--sample-rate HZ]
   rf7-lab inspect PATH.wav
   rf7-lab cartridge PATH.syx
+  rf7-lab report [--cartridge PATH] [--bank-order X]   operators, levels, indexes
+  rf7-lab brightness --program N [--against PATH --against-program N]
   rf7-lab package
   rf7-lab audition [--prepare-only]
   rf7-lab measure-index | calibrate | export-calibration   (see --help calibration)
@@ -67,6 +71,41 @@ fn dispatch(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         "stress" => stress(&Options::parse(rest, false)?),
         "inspect" => inspect(&single_path(rest)?),
         "cartridge" => describe_cartridge(&Options::for_cartridge(rest)?),
+        "report" => report(&Options::parse(rest, false)?),
+        "brightness" => {
+            // --against and --against-program are this command's own; the
+            // rest is the ordinary render option set.
+            let mut own = Vec::new();
+            let mut against_path = None;
+            let mut against_program = 0usize;
+            let mut i = 0;
+            while i < rest.len() {
+                match rest[i].as_str() {
+                    "--against" => {
+                        against_path = rest.get(i + 1).cloned();
+                        i += 2;
+                    }
+                    "--against-program" => {
+                        against_program = rest
+                            .get(i + 1)
+                            .ok_or("--against-program needs a value")?
+                            .parse::<usize>()?
+                            .checked_sub(1)
+                            .ok_or("--against-program is 1..128")?;
+                        i += 2;
+                    }
+                    _ => {
+                        own.push(rest[i].clone());
+                        i += 1;
+                    }
+                }
+            }
+            let options = Options::parse(&own, false)?;
+            brightness::run(
+                &options,
+                against_path.as_deref().map(|p| (p, against_program)),
+            )
+        }
         "package" => package::build(),
         "audition" => audition::run(rest),
         "measure-index" => calibration::measure(rest),
@@ -76,6 +115,9 @@ fn dispatch(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             print!("{HELP}");
             if rest.first().is_some_and(|topic| topic == "calibration") {
                 print!("{}", calibration::HELP);
+            }
+            if rest.first().is_some_and(|topic| topic == "brightness") {
+                print!("{}", brightness::HELP);
             }
             Ok(())
         }
@@ -90,16 +132,16 @@ fn single_path(arguments: &[String]) -> Result<PathBuf, Box<dyn Error>> {
     }
 }
 
-struct Options {
-    output: Option<PathBuf>,
-    cartridge: Option<PathBuf>,
-    swap_banks: bool,
-    program: usize,
-    note: u8,
-    velocity: u8,
-    sample_rate: f32,
-    seconds: f64,
-    hold: f64,
+pub struct Options {
+    pub output: Option<PathBuf>,
+    pub cartridge: Option<PathBuf>,
+    pub swap_banks: bool,
+    pub program: usize,
+    pub note: u8,
+    pub velocity: u8,
+    pub sample_rate: f32,
+    pub seconds: f64,
+    pub hold: f64,
 }
 
 impl Options {
@@ -193,7 +235,7 @@ impl Options {
     }
 }
 
-fn engine(options: &Options) -> Result<Engine, Box<dyn Error>> {
+pub fn engine(options: &Options) -> Result<Engine, Box<dyn Error>> {
     let mut engine = Engine::new(options.sample_rate)?;
     if let Some(path) = &options.cartridge {
         engine.load_library(read_library(path, options.swap_banks)?);
@@ -210,7 +252,7 @@ fn engine(options: &Options) -> Result<Engine, Box<dyn Error>> {
 }
 
 /// Read whatever shape the file is. Nothing here ever writes one back.
-fn read_library(path: &Path, swap: bool) -> Result<Library, Box<dyn Error>> {
+pub fn read_library(path: &Path, swap: bool) -> Result<Library, Box<dyn Error>> {
     let bytes = fs::read(path)?;
     let bytes = if swap {
         swap_banks(&bytes).ok_or("--bank-order swapped needs whole 4096-byte banks")?
@@ -418,6 +460,30 @@ fn describe_cartridge(options: &Options) -> Result<(), Box<dyn Error>> {
             }
         );
     }
+    Ok(())
+}
+
+/// Every voice of a library — the factory bank without `--cartridge` — as its
+/// operators see it, and a statistical summary of the whole.
+fn report(options: &Options) -> Result<(), Box<dyn Error>> {
+    let library = match &options.cartridge {
+        Some(path) => read_library(path, options.swap_banks)?,
+        None => rf7_voice::factory_library(),
+    };
+    println!(
+        "{}",
+        options
+            .cartridge
+            .as_ref()
+            .map_or("factory library".to_owned(), |p| p.display().to_string())
+    );
+    println!(
+        "  C carrier, M modulator, * self-feedback; a modulator's index in radians follows its level"
+    );
+    for (slot, voice) in library.voices().iter().enumerate() {
+        println!("{}", report::voice_line(slot, voice));
+    }
+    print!("{}", report::Summary::of(&library).render());
     Ok(())
 }
 

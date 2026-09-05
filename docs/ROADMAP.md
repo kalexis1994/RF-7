@@ -1,5 +1,18 @@
 # Roadmap
 
+## 0.1.7 — done
+
+- The factory bank retouched against the instrument's own cartridges rather
+  than by ear. `rf7-lab report` measures how a cartridge's designers set their
+  operators — Yamaha's modulators sit at a median of 80 and a quarter of their
+  voices run one at 99; RF-7's sat at 70 and none did — and the bank was moved
+  onto that distribution. `rf7-lab brightness` then compared each RF-7 voice
+  with its ROM1 counterpart by spectral centroid over the attack and the body,
+  which found the struck voices decaying three times too fast and the electric
+  pianos getting their body from the wrong modulator. Both fixed.
+- The design was too dark, not too bright: doubling the modulation index had
+  not caught up with how deep the instrument's own patches go.
+
 ## 0.1.6 — done
 
 - The modulation index is derived, not guessed: 2^(17/16) cycles at level 99,
@@ -87,9 +100,7 @@
    three sources agree; a recording of the calibration cartridge on a real
    DX7 would close the last per cent and check the level curve end to end.
    See [Calibration](CALIBRATION.md).
-2. **Revisit the factory bank** now that the index has doubled: every patch
-   was designed against the old value.
-3. **The envelope rate scale.** The quantisation is documented; the seconds each
+2. **The envelope rate scale.** The quantisation is documented; the seconds each
    quantised rate takes are not, at either end.
 4. **The pitch envelope curve**, which is currently a quadratic standing in for
    a table.
