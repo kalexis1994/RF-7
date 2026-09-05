@@ -44,6 +44,7 @@ pub(crate) fn build_to(output: &Path) -> Result<(), Box<dyn Error>> {
         }
     }
     fs::create_dir_all(&dist)?;
+    super::web_ui::build()?;
     fs::copy(&component, package.join("component.wasm"))?;
     run(Command::new(&core).arg("inspect").arg(&package))?;
     run(Command::new(&core)

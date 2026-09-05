@@ -77,15 +77,18 @@ until something is moved, and a test asserts that.
 | Bend range, master tune, transpose | Documented, but not from the voice | The DX7 keeps all three among its function parameters, outside the cartridge, which is exactly where RF-7 keeps them. |
 | Mod wheel range and target | Documented, in part | The DX7 assigns each controller to pitch, amplitude or the envelope bias with its own range. RF-7 offers the first two destinations and not the third. |
 | Aftertouch range and target | Documented, in part | Same layer, same two destinations. |
-| **Brightness** | **RF-7 addition** | Scales the modulation index of every operator at once. The DX7 had no such control: on the instrument you would reach for six output levels. It exists because a cartridge cannot be edited yet, and it is the fastest way to hear what the modulation index does — the number the ledger above says is unmeasured. |
+| **Brightness** | **RF-7 addition** | Scales the modulation index of every operator at once. The DX7 had no such control: on the instrument you would reach for six output levels. It moves a whole cartridge at once where the editor moves one voice, and it is the fastest way to hear what the modulation index does — the number the ledger above says a recording would confirm. |
 | **Envelope time** | **RF-7 addition** | Stretches every segment of every envelope by one factor. Read once, when a note starts. |
+| **LFO rate** | **RF-7 addition** | A factor on the speed the program asks for, from a quarter to four times. The program's own speed curve is unchanged; this multiplies its result. |
+| **LFO depth** | **RF-7 addition** | Vibrato added to the program's own depth, at the same point the modulation wheel adds its own, so a program with none can still be given some. |
+| **LFO delay** | **RF-7 addition** | Seconds added to the program's delay, because a delay of zero cannot be scaled into existence. |
 | **Velocity depth** | **RF-7 addition** | Scales the velocity offset the patch already asks for. At 0 the instrument stops answering to velocity entirely. |
 | **Operator switches** | Documented as a panel action, not as a control | The DX7 can silence an operator from its front panel; it is not a voice parameter and not continuous. Muting one here changes nothing about how long a note lives. |
 
 The three additions are marked because a reader should be able to tell at a
 glance which controls would exist on the hardware and which are RF-7 making a
-fixed cartridge usable. None of them is a substitute for editing a voice, which
-is a separate milestone.
+whole cartridge playable without opening every voice. Editing one voice is
+[its own contract](EDITING.md).
 
 ## The sine
 

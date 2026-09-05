@@ -1,0 +1,103 @@
+# The PLAY surface
+
+RF-7 draws its own front panel inside RackForge, wherever the host shows a
+plugin — Desktop, the web shell on a Raspberry Pi, a phone. It is a
+silkscreened chassis with knobs, membrane keys, lit glass and section groups,
+in the same idiom as RackForge's other instruments, because a player should
+recognise an instrument before reading a word of it. The host owns the frame
+around it, the session, the audio and the files; the panel owns everything
+inside the frame.
+
+## What it is made of
+
+The surface is a Rust program compiled to WebAssembly, in `crates/rf7-ui`,
+with `package/web/play.html` and `style.css` written by hand. `wasm-bindgen`
+generates the browser glue (`app.js`, `app_bg.wasm`) when the laboratory
+packages the plugin; the glue is not committed. There is no JavaScript
+framework and no JavaScript logic: what to draw, what to ask the host and
+what a reply means are Rust, and the native test build exercises all of it.
+
+| Module | Owns |
+| --- | --- |
+| `model` | The host's context read into typed state: the catalog, the draft with its fields by id, the parameters with their schema. Forgiving on the way in, strict on the way out. |
+| `render` | State to HTML: the whole panel, page by page. Every control carries a `data-field`, `data-param`, `data-sound`, `data-tab` or `data-action` and nothing else; the browser layer routes on those alone. |
+| `diagram` | The algorithm as SVG, laid out from the routing table: carriers along the output rail, each modulator above what it modulates, the feedback path as a loop. |
+| `client` | One request in flight at a time; a dragged slider sends its latest value, not every value; a reply that takes more than five seconds drops the queue and waits for the next context. |
+| `browser` | The only module that touches the DOM, compiled only for wasm. Three event listeners on the root, four pointer listeners for the knobs, one message listener, one timer. |
+
+## How it talks to RackForge
+
+The host's Web Plugin API, version 1, over `postMessage`. The surface sends
+`ready`; the host answers with a `context` — the instance's sounds, the
+draft under edit if one is open, the lighting it is rendering in — and sends
+a fresh one whenever anything changes. The surface asks for the rest:
+
+- `plugin.parameters` and `plugin.set_parameter` for the seventeen
+  performance controls, drawn from the schema the host returns so a
+  parameter added to the plugin appears without a change here;
+- `plugin.select_sound` to play a program;
+- `plugin.begin_program_edit`, `plugin.edit_program_field`,
+  `plugin.set_program_name`, `plugin.save_program` and
+  `plugin.cancel_program` for the editor;
+- `plugin.set_surface_info` so RackForge's own performance bar names the
+  draft while one is open.
+
+Every edit goes to the host and comes back in the next context. The surface
+shows the value it sent until the host has both answered and echoed it, so a
+slider does not jump while its request is in flight and cannot disagree with
+the engine afterwards.
+
+## The panel
+
+A head rail across the top, four section keys under it, and the working
+surface below.
+
+**The head rail** carries the RF-7 logotype, the lit display and the command
+keys. The display shows the program number, its name, what the panel is doing
+to it — PLAYING, EDITING, EDITING · UNSAVED — and one line of machine state.
+The keys are EDIT and NEW while a program plays; SAVE (its lamp lit while
+there are unsaved changes) and EXIT, with the name field, while one is open.
+
+**VOICE** — the algorithm on lit glass, drawn from the routing table, with a
+stepper, a selector for all thirty-two and the carrier list printed beneath;
+feedback, transpose, pitch-modulation sensitivity and oscillator key sync;
+the LFO with its six waveform keys; and the pitch envelope drawn as a trace
+around its centre line, because a pitch envelope is a deviation, not an
+amount.
+
+**OPERATORS** — six columns, one per operator, each headed by its number, the
+role the algorithm gives it, its frequency as the panel would write it
+(`×2.00`, `440 Hz`) and its output level. Under that its envelope on lit
+glass, then the four rates over the four levels, the output group, the
+frequency group with its FIXED key, and keyboard scaling with the two curve
+key rows. A carrier is amber, from its top edge to the trace on its screen to
+the cap of its knobs; a modulator is blue.
+
+**PERFORM** — the seventeen public parameters, grouped as the plugin's own
+schema groups them, so a parameter added to the plugin appears here without a
+change to the panel. These are the same controls the LITTLE surface and MIDI
+links see.
+
+**PROGRAMS** — the library's banks and then YOUR PROGRAMS, as pads. One press
+plays a program. While a program is open for editing the pads are dark: the
+host holds the audition for the draft.
+
+Knobs turn by dragging up and down — a hundred and eighty pixels is the whole
+range, the throw the other RackForge instruments use — and answer the arrow,
+page and home keys when focused. A choice is a row of membrane keys, except
+the algorithm, which has thirty-two positions and so keeps a selector.
+
+The panel has one appearance. It does not repaint itself for the room, any
+more than a painted chassis would; the host's lighting hint is read and left
+alone.
+
+## What it refuses to do
+
+- It never assumes a value. Before the first context it draws nothing
+  editable; after a lost reply it disables what it cannot vouch for.
+- It never edits a program the host did not open. Selecting a sound while a
+  draft is open does nothing; the host would refuse it anyway.
+- It never writes a name the host would reject: one to sixty-four printable
+  ASCII characters, trimmed.
+- It never loses a field. A control the layout has no place for — one a
+  later plugin adds — is rendered under *More* from the host's typed tree.

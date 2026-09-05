@@ -7,6 +7,7 @@ mod calibration;
 mod package;
 mod report;
 mod wav;
+mod web_ui;
 
 use rf7_dsp::{Engine, POLYPHONY, SAMPLE_RATE_MAX, SAMPLE_RATE_MIN};
 use rf7_voice::{

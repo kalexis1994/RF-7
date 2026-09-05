@@ -1,13 +1,21 @@
-//! The program catalog RackForge asks for after a library is delivered.
+//! The program catalog RackForge asks for after a library is delivered or a
+//! program is saved.
 //!
 //! Written by hand into the host's transfer buffer. A serializer would be
 //! easier to read, but this runs inside the guest with a fixed buffer and no
 //! room to fail halfway: either the whole catalog fits or nothing is written.
+//!
+//! The library's voices come first, in banks of thirty-two. The programs the
+//! user saved from the editor follow in a bank of their own. Every entry is
+//! marked editable, because the host offers its editor only for sounds that
+//! say so: a library voice opens as a copy, a saved program opens in place.
 
+use crate::programs::{CustomPrograms, PREFIX as CUSTOM_PREFIX};
 use rf7_voice::{Library, MAX_VOICES, VOICES_PER_CARTRIDGE, printable_name};
 
 const PREFIX: &str = "program-";
 const BANK_PREFIX: &str = "bank-";
+const USER_BANK: &str = "bank-user";
 
 /// Turn a catalog identifier back into a slot. Anything else is not ours.
 pub fn program_index(id: &str) -> Option<usize> {
@@ -26,7 +34,7 @@ fn banks(library: &Library) -> usize {
 }
 
 /// Write the whole catalog, or write nothing and return `None`.
-pub fn write(library: &Library, destination: &mut [u8]) -> Option<usize> {
+pub fn write(library: &Library, custom: &CustomPrograms, destination: &mut [u8]) -> Option<usize> {
     let mut out = Writer {
         destination,
         written: 0,
@@ -43,6 +51,13 @@ pub fn write(library: &Library, destination: &mut [u8]) -> Option<usize> {
         out.number(bank + 1);
         out.text("\",\"order\":");
         out.number(bank);
+        out.text("}");
+    }
+    if !custom.is_empty() {
+        out.text(",{\"id\":\"");
+        out.text(USER_BANK);
+        out.text("\",\"name\":\"Your programs\",\"order\":");
+        out.number(banks(library));
         out.text("}");
     }
     out.text("],\"presets\":[");
@@ -66,8 +81,20 @@ pub fn write(library: &Library, destination: &mut [u8]) -> Option<usize> {
         }
         out.text("\",\"bank\":\"");
         out.bank_id(slot / VOICES_PER_CARTRIDGE);
-        out.text("\",\"category\":\"FM\",\"order\":");
+        out.text("\",\"category\":\"FM\",\"editable\":true,\"order\":");
         out.number(slot);
+        out.text("}");
+    }
+    for (index, program) in custom.entries().iter().enumerate() {
+        out.text(",{\"id\":\"");
+        out.text(CUSTOM_PREFIX);
+        out.text(&program.id);
+        out.text("\",\"name\":\"");
+        out.escaped(&program.name);
+        out.text("\",\"bank\":\"");
+        out.text(USER_BANK);
+        out.text("\",\"category\":\"FM\",\"editable\":true,\"order\":");
+        out.number(library.len().max(1) + index);
         out.text("}");
     }
     out.text("]}");
@@ -102,13 +129,19 @@ impl Writer<'_> {
         self.number(bank + 1);
     }
 
-    /// Voice names are printable ASCII, but nothing stops one holding a quote.
+    /// Voice names are printable ASCII, but nothing stops one holding a
+    /// quote; a name typed into the host can hold anything at all.
     fn escaped(&mut self, text: &str) {
         for byte in text.bytes() {
-            if byte == b'"' || byte == b'\\' {
-                self.byte(b'\\');
+            match byte {
+                b'"' | b'\\' => {
+                    self.byte(b'\\');
+                    self.byte(byte);
+                }
+                0x20..=0x7e => self.byte(byte),
+                0x80.. => self.byte(byte),
+                _ => self.byte(b' '),
             }
-            self.byte(byte);
         }
     }
 
@@ -136,8 +169,12 @@ mod tests {
     use rf7_voice::{FACTORY_VOICES, Voice, factory_library, factory_voice};
 
     fn rendered(library: &Library) -> String {
+        rendered_with(library, &CustomPrograms::default())
+    }
+
+    fn rendered_with(library: &Library, custom: &CustomPrograms) -> String {
         let mut buffer = [0u8; crate::TRANSFER_BYTES];
-        let length = write(library, &mut buffer).expect("the catalog must fit");
+        let length = write(library, custom, &mut buffer).expect("the catalog must fit");
         core::str::from_utf8(&buffer[..length])
             .expect("ASCII only")
             .to_owned()
@@ -181,16 +218,59 @@ mod tests {
         let mut voice = factory_voice(0);
         voice.name = *b"\\\"\\\"\\\"\\\"\\\"";
         let library = Library::from_voices(&[voice; MAX_VOICES]);
+        let mut custom = CustomPrograms::default();
+        for number in 0..crate::programs::MAX_CUSTOM_PROGRAMS {
+            assert!(custom.install(crate::programs::CustomProgram {
+                id: format!("user.rf7-{number:03}"),
+                name: "\"".repeat(64),
+                voice,
+            }));
+        }
         let mut buffer = [0u8; crate::TRANSFER_BYTES];
-        let length = write(&library, &mut buffer).expect("128 escaped names must fit");
+        let length = write(&library, &custom, &mut buffer).expect("256 escaped names must fit");
         assert!(length <= crate::TRANSFER_BYTES);
+        assert!(serde_json::from_slice::<serde_json::Value>(&buffer[..length]).is_ok());
+    }
+
+    #[test]
+    fn saved_programs_follow_the_library_in_their_own_bank() {
+        let mut custom = CustomPrograms::default();
+        assert!(custom.install(crate::programs::CustomProgram {
+            id: "user.rf7-001".into(),
+            name: "My \"tines\" \u{e9}".into(),
+            voice: factory_voice(0),
+        }));
+        let json = rendered_with(&factory_library(), &custom);
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let presets = value["presets"].as_array().unwrap();
+        assert_eq!(presets.len(), FACTORY_VOICES + 1);
+        let last = presets.last().unwrap();
+        assert_eq!(last["id"], "custom.user.rf7-001");
+        assert_eq!(last["name"], "My \"tines\" \u{e9}");
+        assert_eq!(last["bank"], "bank-user");
+        assert_eq!(last["editable"], true);
+        assert_eq!(last["order"], FACTORY_VOICES);
+        assert_eq!(
+            presets[0]["editable"], true,
+            "a library voice opens in the editor, as a copy"
+        );
+        let banks = value["banks"].as_array().unwrap();
+        assert_eq!(banks.len(), 2);
+        assert_eq!(banks[1]["id"], "bank-user");
+        assert!(
+            !rendered(&factory_library()).contains("bank-user"),
+            "no empty bank"
+        );
     }
 
     #[test]
     fn a_buffer_too_small_writes_nothing_rather_than_half_a_catalog() {
         for capacity in [0, 1, 64, 200] {
             let mut buffer = vec![0u8; capacity];
-            assert_eq!(write(&factory_library(), &mut buffer), None);
+            assert_eq!(
+                write(&factory_library(), &CustomPrograms::default(), &mut buffer),
+                None
+            );
         }
     }
 

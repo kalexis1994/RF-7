@@ -12,8 +12,8 @@
 
 use rf7_dsp::{
     BEND_SEMITONES_DEFAULT, BEND_SEMITONES_MAX, BRIGHTNESS_MAX, Controls, DEFAULT_GAIN,
-    ENVELOPE_TIME_MAX, ENVELOPE_TIME_MIN, GAIN_MAX, OPERATORS, TRANSPOSE_MAX, TUNE_CENTS_MAX,
-    Target, VELOCITY_DEPTH_MAX,
+    ENVELOPE_TIME_MAX, ENVELOPE_TIME_MIN, GAIN_MAX, LFO_DELAY_MAX, LFO_DEPTH_MAX, LFO_RATE_MAX,
+    LFO_RATE_MIN, OPERATORS, TRANSPOSE_MAX, TUNE_CENTS_MAX, Target, VELOCITY_DEPTH_MAX,
 };
 
 pub const GAIN: u32 = 0;
@@ -29,8 +29,14 @@ pub const ENVELOPE_TIME: u32 = 9;
 pub const VELOCITY_DEPTH: u32 = 10;
 /// The first of the six operator switches; OP(n) is `OPERATOR_FIRST + n - 1`.
 pub const OPERATOR_FIRST: u32 = 11;
+/// The performance layer over the program's LFO. These sit after the operator
+/// switches because an index, once published, is what a saved session and a
+/// MIDI link point at: new controls are appended, never inserted.
+pub const LFO_RATE: u32 = OPERATOR_FIRST + OPERATORS as u32;
+pub const LFO_DEPTH: u32 = LFO_RATE + 1;
+pub const LFO_DELAY: u32 = LFO_RATE + 2;
 
-pub const COUNT: usize = OPERATOR_FIRST as usize + OPERATORS;
+pub const COUNT: usize = LFO_DELAY as usize + 1;
 
 /// Which shape the schema must declare. The host draws from this; RF-7 only
 /// needs it to check that the two descriptions of a parameter match.
@@ -89,6 +95,9 @@ pub const PARAMETERS: [Parameter; COUNT] = [
     switch("operator_4"),
     switch("operator_5"),
     switch("operator_6"),
+    float("lfo_rate", LFO_RATE_MIN as f64, LFO_RATE_MAX as f64, 1.0),
+    float("lfo_depth", 0.0, LFO_DEPTH_MAX as f64, 0.0),
+    float("lfo_delay", 0.0, LFO_DELAY_MAX as f64, 0.0),
 ];
 
 const fn float(id: &'static str, minimum: f64, maximum: f64, default: f64) -> Parameter {
@@ -174,6 +183,9 @@ pub fn controls(values: &[f64; COUNT]) -> Controls {
         brightness: values[BRIGHTNESS as usize] as f32,
         envelope_time: values[ENVELOPE_TIME as usize] as f32,
         velocity_depth: values[VELOCITY_DEPTH as usize] as f32,
+        lfo_rate: values[LFO_RATE as usize] as f32,
+        lfo_depth: values[LFO_DEPTH as usize] as f32,
+        lfo_delay: values[LFO_DELAY as usize] as f32,
         operators,
     }
 }

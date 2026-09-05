@@ -22,7 +22,7 @@ The voices a DX7 shipped with are Yamaha's; RF-7 plays a cartridge you supply.
 
 ## Controls
 
-Seventeen parameters, in four pages. They are offsets on the loaded program,
+Twenty parameters, in five pages. They are offsets on the loaded program,
 not a second copy of it, and every one of them is neutral at its default:
 
 - **Output** — output gain.
@@ -30,13 +30,41 @@ not a second copy of it, and every one of them is neutral at its default:
   destination each for the modulation wheel and for aftertouch. This is the
   DX7's own function-parameter layer, which never lived in a cartridge.
 - **Voice** — brightness, envelope time and velocity depth. These the DX7 did
-  not have; they exist because a cartridge cannot be edited yet. Brightness
-  scales the modulation index of every operator at once, which is also the
-  quickest way to hear the one constant the model ledger says is unmeasured.
+  not have; they are one-knob ways to move a whole cartridge at once, next to
+  the editor that moves one voice. Brightness scales the modulation index of
+  every operator together, which is also the quickest way to hear the one
+  constant the model ledger says a recording would confirm.
+- **LFO** — rate, depth and delay over the program's own: a factor on its
+  speed, vibrato added to its depth, seconds added to its delay. A program
+  with no vibrato of its own answers to these.
 - **Operators** — six switches, one per operator.
 
-Editing the 155 parameters of a voice is a different contract and a later
-milestone; see [the roadmap](docs/ROADMAP.md).
+RF-7 publishes six of RackForge's standard control roles, so a controller's
+knobs find them without the player mapping anything: `plugin.output.level`
+and `synth.amplifier.level` on the output gain, `synth.filter.cutoff` on
+brightness — an FM instrument has no filter, and brightness is what that knob
+is for — and the three `synth.lfo.*` roles on the LFO layer. The roles RF-7
+cannot honour are left unclaimed rather than pointed at something that only
+resembles them.
+
+## The window
+
+RF-7 draws its own front panel inside RackForge — a silkscreened chassis with
+knobs, membrane keys and lit glass, in the idiom of the other RackForge
+instruments. Four sections: the voice with its algorithm chart, the six
+operators as a programmer's columns, the public parameters, and the program
+library as pads. It is a Rust program compiled to WebAssembly, with no
+JavaScript logic. See [The PLAY surface](docs/UI.md).
+
+## Editing
+
+Every parameter of a voice — the algorithm, the six operators, their
+envelopes, scaling and frequencies, the pitch envelope and the LFO — is edited
+inside RackForge, in RF-7's own window or on a controller's display, with
+live preview. A library voice opens as a copy and the cartridge is never
+touched; a saved program reopens in place. Beside each saved program the
+plugin leaves the voice as a single-voice System Exclusive dump, so it can go
+to hardware. See [Editing](docs/EDITING.md).
 
 ## Quick start
 
@@ -61,8 +89,8 @@ cargo run --release -p rf7-lab -- calibrate
 cargo run --release -p rf7-lab -- export-calibration --output renders/rf7-calibration.syx
 ```
 
-Requires Rust 1.98 and a sibling RackForge checkout for its public SDK. See
-[Development](docs/DEVELOPMENT.md). Existing audio and report files are never
+Requires Rust 1.98, `wasm-bindgen-cli` 0.2.127 for the surface, and a sibling
+RackForge checkout for its public SDK. See [Development](docs/DEVELOPMENT.md). Existing audio and report files are never
 overwritten.
 
 ## What is here
@@ -75,13 +103,17 @@ overwritten.
   with no dependencies. Reads the index off a two-operator recording of any
   level.
 - `rf7-plugin`: the RackForge adapter, with MIDI 1.0 and 2.0, versioned state,
-  and a program catalog built from the installed cartridge.
+  a program catalog built from the installed cartridge and the saved programs,
+  and the declarative voice editor the host draws.
+- `rf7-ui`: the PLAY surface, Rust compiled to WebAssembly: the host's
+  context read into state, state drawn as HTML, the algorithm drawn as SVG.
 - `rf7-lab`: rendering, WAV, JSON reports, cartridge inspection, packaging and
   the Desktop audition workflow.
 
 Tests cover the algorithm table's invariants, envelope ordering and release,
-absolute pitch, cartridge round trips and refusals, voice stealing, and what the
-plugin does with a malformed block.
+absolute pitch, cartridge round trips and refusals, voice stealing, what the
+plugin does with a malformed block, and the editing contract end to end with
+the host's own validators reading every envelope the plugin emits.
 
 ## Cartridges
 
@@ -100,6 +132,10 @@ See [Cartridges](docs/CARTRIDGES.md).
 - [Roadmap](docs/ROADMAP.md): what is done, and what would improve the sound
   most, in that order.
 - [Cartridges](docs/CARTRIDGES.md): what RF-7 reads and how it is installed.
+- [The PLAY surface](docs/UI.md): RF-7's own window, what it is made of and
+  how it talks to the host.
+- [Editing](docs/EDITING.md): the voice editor inside RackForge, and what a
+  saved program leaves on disk.
 - [Calibration](docs/CALIBRATION.md): how the modulation index gets measured,
   and what a real DX7 has to record for it.
 - [Sources](docs/SOURCES.md): what the structure was written from.

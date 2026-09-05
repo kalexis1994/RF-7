@@ -1,5 +1,44 @@
 # Roadmap
 
+## 0.3.0 — done
+
+- RF-7's own front panel: a PLAY surface drawn inside RackForge on every
+  host that shows plugins, in the idiom of the other RackForge instruments —
+  a silkscreened chassis with knobs, membrane keys and lit glass. Four
+  sections: the voice with its algorithm chart, the six operators as a
+  programmer's columns, the public parameters, and the program library as
+  pads. A Rust program compiled to WebAssembly, with the host's Web Plugin
+  API as its only dependency and no JavaScript logic. See [The PLAY
+  surface](UI.md).
+- A branded package: manifest schema 3 with icon, banner and splash, so
+  RackForge shows RF-7 as itself rather than under its generic identity.
+- Every catalog entry is editable: a library voice opens in the editor as a
+  copy, from RF-7's window and from a controller's display alike.
+- RF-7 answers RackForge's standard control vocabulary: parameter schema 2
+  with six published roles, so a controller's output, cutoff and LFO knobs
+  reach the instrument without the player mapping anything. Three of them
+  are new controls — a performance layer over the program's LFO — because a
+  role pointed at nothing would be worse than a role left unclaimed.
+
+## 0.2.0 — done
+
+- Every parameter of a voice is edited inside RackForge, on any surface the
+  host draws, with live preview: the plugin speaks the host's portable
+  program-editing contract and publishes the voice as pages of fields. A
+  library voice opens as a copy; a saved program reopens in place; the
+  cartridge is never changed. See [Editing](EDITING.md).
+- Saved programs join the catalog in a bank of their own, marked editable,
+  survive a cartridge change, and are remembered by the session (state
+  version 3, written only when one is selected, so older sessions still
+  open in older RF-7s).
+- Beside every saved program the plugin leaves the voice as a single-voice
+  System Exclusive dump: the `.syx` export path, for free, from the
+  contract's artifacts.
+- The document format is the voice in words, so a file found on disk can be
+  read without RF-7, and a hand-edited one is clamped rather than trusted.
+- The editing tests run the host's own validators over everything the plugin
+  emits, so the envelopes cannot drift from what the host accepts.
+
 ## 0.1.7 — done
 
 - The factory bank retouched against the instrument's own cartridges rather
@@ -118,9 +157,9 @@
   retriggers its envelopes, which on the instrument it does not.
 - A ZIP import container, so a folder of `.syx` files can be installed in one
   step instead of one cartridge at a time.
-- Portable individual-program editing, so the six operators can be edited inside
-  RackForge rather than only selected.
-- A branded schema 3 package, once there is artwork.
 - `parallel_render_v1`: sixteen voices split cleanly across audio workers, and
   this instrument is exactly the shape that contract was written for.
-- A `.syx` export path, so a voice edited in RackForge can go back to hardware.
+- A whole-library `.syx` export — the thirty-two-voice bulk dump — for the
+  saved programs together; each one already leaves its own single-voice dump.
+- A voice name field in the editor, when the host's generic editor grows a
+  text kind; today the name is the program's name in the host.

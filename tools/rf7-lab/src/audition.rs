@@ -108,6 +108,7 @@ pub fn run(args: &[String]) -> Result<(), Box<dyn Error>> {
         &installed,
         &root.join("target/wasm32-unknown-unknown/release/rf7_plugin.wasm"),
     )?;
+    super::web_ui::verify_install(&installed, &root.join("package"))?;
     prepare_session(&library, &run_dir)?;
     copy_initial_audio_settings(&library)?;
     let logs = run_dir.join("rackforge.log");

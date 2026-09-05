@@ -27,26 +27,53 @@ pub struct Lfo {
 
 impl Lfo {
     pub fn new(parameters: &LfoParameters, sample_rate: f32) -> Self {
-        let delay = lfo_delay_seconds(parameters.delay);
         let mut lfo = Self {
             phase: 0.0,
-            increment: lfo_hertz(parameters.speed) / sample_rate,
+            increment: 0.0,
             waveform: parameters.shape(),
-            delay,
-            // No delay means no fade: the modulation is simply already there.
-            fade: if delay > 0.0 {
-                delay.max(MINIMUM_FADE)
-            } else {
-                0.0
-            },
+            delay: 0.0,
+            fade: 0.0,
             elapsed: 0.0,
             period: 1.0 / sample_rate,
             sync: parameters.sync,
             held: 0.0,
             random: 0x2545_f491,
         };
+        lfo.retune(parameters, sample_rate, 1.0, 0.0);
         lfo.held = lfo.next_random();
         lfo
+    }
+
+    /// Take the speed and the delay again, with the performance layer applied:
+    /// the rate as a factor on the program's own speed, the delay as seconds
+    /// added to it. The phase and whatever has already elapsed are kept, so a
+    /// knob turned mid-phrase bends the modulation instead of restarting it.
+    pub fn retune(
+        &mut self,
+        parameters: &LfoParameters,
+        sample_rate: f32,
+        rate_scale: f32,
+        added_delay: f32,
+    ) {
+        let rate_scale = if rate_scale.is_finite() {
+            rate_scale.max(0.0)
+        } else {
+            1.0
+        };
+        let added_delay = if added_delay.is_finite() {
+            added_delay.max(0.0)
+        } else {
+            0.0
+        };
+        self.increment = lfo_hertz(parameters.speed) * rate_scale / sample_rate;
+        let delay = lfo_delay_seconds(parameters.delay) + added_delay;
+        self.delay = delay;
+        // No delay means no fade: the modulation is simply already there.
+        self.fade = if delay > 0.0 {
+            delay.max(MINIMUM_FADE)
+        } else {
+            0.0
+        };
     }
 
     /// Called when a key starts a phrase. A synced LFO restarts its cycle and

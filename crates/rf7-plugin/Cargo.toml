@@ -12,11 +12,14 @@ crate-type = ["cdylib", "rlib"]
 rf7-dsp.workspace = true
 rf7-voice.workspace = true
 rackforge-plugin-sdk.workspace = true
-
-# Only to read the package schema back in tests/schema.rs. The plugin itself
-# parses no JSON: its catalog is written by hand into the transfer buffer.
-[dev-dependencies]
+# The program editor exchanges the host's JSON envelopes. The catalog is still
+# written by hand, because it has to fit or fail as a whole.
+serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+rackforge-program-api.workspace = true
+rackforge-plugin-api.workspace = true
 
 # The SDK export macro implements the raw ABI. Handwritten code is safe Rust.
 [lints.clippy]

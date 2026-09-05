@@ -1,0 +1,29 @@
+[package]
+name = "rf7-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The RF-7 PLAY surface: a Rust program that draws the instrument inside RackForge"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rf7-dsp.workspace = true
+serde_json.workspace = true
+
+# The browser bindings exist only on the wasm target. Everything the surface
+# decides — what to draw, what to ask the host, what a reply means — is plain
+# Rust that the native test build exercises.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.127"
+js-sys = "=0.3.104"
+web-sys = { version = "=0.3.104", features = [
+    "Window", "Document", "Element", "Event", "EventTarget", "Node", "HtmlElement",
+    "HtmlInputElement", "HtmlSelectElement", "Location", "MessageEvent", "NodeList",
+    "PointerEvent", "Performance",
+] }
+
+[lints]
+workspace = true

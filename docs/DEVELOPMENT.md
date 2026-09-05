@@ -3,11 +3,18 @@
 ## Toolchain
 
 Rust 1.98.0 is pinned. The DSP and the voice model have no third-party
-dependencies at all; the laboratory uses `serde_json` for its reports, and the
-plugin uses the public RackForge SDK from a sibling `rackforge` checkout through
-an explicit Cargo path. A local path dependency is not a reproducible
+dependencies at all; the laboratory uses `serde_json` for its reports, the
+plugin uses `serde` for the host's editing envelopes, and the plugin uses the
+public RackForge SDK from a sibling `rackforge` checkout through an explicit
+Cargo path. The plugin's tests also take the host's `rackforge-program-api` and
+`rackforge-plugin-api` from that checkout, so the envelopes the plugin emits are
+validated by the code that will receive them. A local path dependency is not a reproducible
 distribution pin: before an external release, replace it with a published
 version or an exact Git revision and regenerate `Cargo.lock`.
+
+The PLAY surface is built by `wasm-bindgen-cli`, pinned to exactly 0.2.127 to
+match the crate the surface links; `cargo install wasm-bindgen-cli --version
+0.2.127` installs it. The laboratory refuses to package with any other version.
 
 On this Windows GNU setup, put `C:/msys64/ucrt64/bin` on the shell's PATH so
 Rust finds the linker. No machine-wide change is needed.
@@ -19,6 +26,7 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo build --locked --release --workspace
 cargo build --locked --release --target wasm32-unknown-unknown -p rf7-plugin
+cargo build --locked --release --target wasm32-unknown-unknown -p rf7-ui
 ```
 
 ## Render and inspect
@@ -69,18 +77,21 @@ Then, from here:
 cargo run --release -p rf7-lab -- package
 ```
 
-The laboratory copies the current WASM into the ignored `package/component.wasm`,
-validates the metadata and smoke-tests it through the host, and creates the
-archive only after both succeed. It never overwrites an existing archive.
+The laboratory builds the surface into the ignored `package/web/app.js` and
+`app_bg.wasm`, copies the current WASM into the ignored
+`package/component.wasm`, validates the metadata and smoke-tests it through
+the host, and creates the archive only after all of that succeeds. It never
+overwrites an existing archive.
 
 ## Layout
 
 ```text
 crates/rf7-voice/    voice parameters, both byte layouts, System Exclusive
 crates/rf7-dsp/      algorithms, envelopes, operators, LFO, engine
-crates/rf7-plugin/   SDK adapter, MIDI validation, program catalog, state
+crates/rf7-plugin/   SDK adapter, MIDI validation, program catalog, state, editor
+crates/rf7-ui/       the PLAY surface: host context, HTML, the algorithm diagram
 tools/rf7-lab/       rendering, WAV, reports, packaging, audition
-package/             RackForge manifest and metadata
+package/             RackForge manifest, metadata, branding and the surface
 docs/                design, model ledger and development notes
 renders/             ignored generated WAV and JSON
 cartridges/          ignored; your own System Exclusive files

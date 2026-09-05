@@ -50,6 +50,13 @@ pub const ENVELOPE_TIME_MIN: f32 = 0.25;
 pub const ENVELOPE_TIME_MAX: f32 = 4.0;
 /// Velocity depth scales how much level a soft key gives away.
 pub const VELOCITY_DEPTH_MAX: f32 = 2.0;
+/// The performance layer over the program's own LFO: a factor either side of
+/// the speed it asks for, extra vibrato added to the depth it asks for, and
+/// seconds added to its delay. Neutral at 1, 0 and 0.
+pub const LFO_RATE_MIN: f32 = 0.25;
+pub const LFO_RATE_MAX: f32 = 4.0;
+pub const LFO_DEPTH_MAX: f32 = 1.0;
+pub const LFO_DELAY_MAX: f32 = 4.0;
 /// Every operator heard.
 pub const ALL_OPERATORS: u8 = (1 << OPERATORS) - 1;
 
@@ -127,6 +134,13 @@ pub struct Controls {
     pub brightness: f32,
     pub envelope_time: f32,
     pub velocity_depth: f32,
+    /// A factor on the program's LFO speed. 1.0 is the program's own.
+    pub lfo_rate: f32,
+    /// Vibrato added to whatever the program and the controllers already ask
+    /// for. 0.0 adds none.
+    pub lfo_depth: f32,
+    /// Seconds added to the program's LFO delay. 0.0 adds none.
+    pub lfo_delay: f32,
     /// Bit `i` set means OP(i+1) is heard.
     pub operators: u8,
 }
@@ -144,6 +158,9 @@ impl Default for Controls {
             brightness: 1.0,
             envelope_time: 1.0,
             velocity_depth: 1.0,
+            lfo_rate: 1.0,
+            lfo_depth: 0.0,
+            lfo_delay: 0.0,
             operators: ALL_OPERATORS,
         }
     }
@@ -180,6 +197,9 @@ impl Controls {
                 1.0,
             ),
             velocity_depth: finite(self.velocity_depth, 0.0, VELOCITY_DEPTH_MAX, 1.0),
+            lfo_rate: finite(self.lfo_rate, LFO_RATE_MIN, LFO_RATE_MAX, 1.0),
+            lfo_depth: finite(self.lfo_depth, 0.0, LFO_DEPTH_MAX, 0.0),
+            lfo_delay: finite(self.lfo_delay, 0.0, LFO_DELAY_MAX, 0.0),
             operators: self.operators & ALL_OPERATORS,
             ..self
         }
@@ -298,6 +318,18 @@ impl Engine {
     /// state the caller did not ask for and cannot see.
     pub fn set_controls(&mut self, controls: Controls) {
         self.controls = controls.clamped();
+        self.retune_lfo();
+    }
+
+    /// The LFO reads its speed and delay from the program and the performance
+    /// layer together, so either changing means taking them again.
+    fn retune_lfo(&mut self) {
+        self.lfo.retune(
+            &self.patch.lfo,
+            self.sample_rate,
+            self.controls.lfo_rate,
+            self.controls.lfo_delay,
+        );
     }
 
     pub fn controls(&self) -> Controls {
@@ -350,8 +382,17 @@ impl Engine {
         &self.patch
     }
 
+    /// Play a voice that is not in the library — a draft under edit. The
+    /// program index is left where it was, so a later program change lands
+    /// on the same program it would have before.
+    pub fn load_patch(&mut self, voice: Voice) {
+        self.patch = voice;
+        self.apply_patch();
+    }
+
     fn apply_patch(&mut self) {
         self.lfo = Lfo::new(&self.patch.lfo, self.sample_rate);
+        self.retune_lfo();
         self.pitch_depth = tables::pitch_mod_semitones(self.patch.pitch_mod_sensitivity);
         self.amp_depth = f32::from(self.patch.lfo.amp_mod_depth.min(99)) / 99.0;
     }
@@ -453,6 +494,7 @@ impl Engine {
         self.pressure = 0.0;
         self.stolen = 0;
         self.lfo = Lfo::new(&self.patch.lfo, self.sample_rate);
+        self.retune_lfo();
     }
 
     pub fn active_voices(&self) -> usize {
@@ -478,8 +520,10 @@ impl Engine {
                 added_amplitude += amount;
             }
         }
-        let pitch_depth =
-            (f32::from(self.patch.lfo.pitch_mod_depth.min(99)) / 99.0 + added_pitch).min(1.0);
+        let pitch_depth = (f32::from(self.patch.lfo.pitch_mod_depth.min(99)) / 99.0
+            + added_pitch
+            + self.controls.lfo_depth)
+            .min(1.0);
         let amplitude_depth = (self.amp_depth + added_amplitude).min(1.0);
         let performance = Performance {
             pitch: self.bend_position * self.controls.bend_semitones
@@ -921,6 +965,129 @@ mod tests {
         let slow = ringing(4.0);
         assert!(quick > 0.0);
         assert!(slow > quick * 1.5, "stretched to {slow} from {quick}");
+    }
+
+    /// One note of a voice with the given controls, from silence.
+    fn vibrato_render(controls: Controls, samples: usize) -> Vec<f32> {
+        let mut voice = rf7_voice::factory_voice(0);
+        // A program that asks for no vibrato of its own, but answers to it.
+        voice.lfo.pitch_mod_depth = 0;
+        voice.lfo.delay = 0;
+        voice.lfo.speed = 70;
+        voice.pitch_mod_sensitivity = 7;
+        let mut engine = engine();
+        engine.load_patch(voice);
+        engine.set_controls(controls);
+        engine.note_on(0, 60, 100);
+        render(&mut engine, samples)
+    }
+
+    fn difference(left: &[f32], right: &[f32]) -> f32 {
+        left.iter()
+            .zip(right)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max)
+    }
+
+    #[test]
+    fn the_performance_layer_adds_the_vibrato_the_program_never_asked_for() {
+        let plain = vibrato_render(Controls::default(), 24_000);
+        let vibrato = vibrato_render(
+            Controls {
+                lfo_depth: 1.0,
+                ..Controls::default()
+            },
+            24_000,
+        );
+        assert!(
+            difference(&plain, &vibrato) > 0.01,
+            "the depth control moved nothing"
+        );
+
+        // The rate changes how fast it moves...
+        let faster = vibrato_render(
+            Controls {
+                lfo_depth: 1.0,
+                lfo_rate: 4.0,
+                ..Controls::default()
+            },
+            24_000,
+        );
+        assert!(
+            difference(&vibrato, &faster) > 0.01,
+            "the rate moved nothing"
+        );
+
+        // ...and the delay holds it off, so the first fiftieth of a second is
+        // the unmodulated note and only later does it part from it.
+        let delayed = vibrato_render(
+            Controls {
+                lfo_depth: 1.0,
+                lfo_delay: 0.25,
+                ..Controls::default()
+            },
+            24_000,
+        );
+        assert_eq!(
+            difference(&plain[..960], &delayed[..960]),
+            0.0,
+            "the delay did not hold the modulation off"
+        );
+        assert!(
+            difference(&plain[..960], &vibrato[..960]) > 0.0,
+            "without the delay it starts at once"
+        );
+        assert!(difference(&plain, &delayed) > 0.0, "and it does arrive");
+    }
+
+    #[test]
+    fn the_lfo_layer_is_bounded_and_survives_a_program_change() {
+        let wild = Controls {
+            lfo_rate: f32::NAN,
+            lfo_depth: 9.0,
+            lfo_delay: -3.0,
+            ..Controls::default()
+        }
+        .clamped();
+        assert_eq!(wild.lfo_rate, 1.0);
+        assert_eq!(wild.lfo_depth, LFO_DEPTH_MAX);
+        assert_eq!(wild.lfo_delay, 0.0);
+
+        // A program change rebuilds the LFO; the layer must still be on it.
+        let mut layered = engine();
+        layered.set_controls(Controls {
+            lfo_depth: 1.0,
+            lfo_rate: 4.0,
+            ..Controls::default()
+        });
+        layered.select_program(3);
+        layered.note_on(0, 60, 100);
+        let with_layer = render(&mut layered, 24_000);
+        let mut untouched = engine();
+        untouched.select_program(3);
+        untouched.note_on(0, 60, 100);
+        assert!(difference(&with_layer, &render(&mut untouched, 24_000)) > 0.0);
+    }
+
+    #[test]
+    fn a_draft_plays_without_entering_the_library() {
+        let mut engine = engine();
+        engine.select_program(3);
+        let mut draft = rf7_voice::factory_voice(6);
+        draft.name = *b"DRAFT     ";
+        engine.load_patch(draft);
+        assert_eq!(engine.program(), 3, "the selection is untouched");
+        assert_eq!(
+            engine.program_count(),
+            FACTORY_VOICES,
+            "and so is the library"
+        );
+        assert_eq!(engine.patch().name, *b"DRAFT     ");
+        engine.note_on(0, 60, 100);
+        assert!(peak(&render(&mut engine, 4_800)) > 0.0);
+        // Selecting the program again restores it.
+        engine.select_program(3);
+        assert_eq!(engine.patch(), &rf7_voice::factory_voice(3));
     }
 
     #[test]

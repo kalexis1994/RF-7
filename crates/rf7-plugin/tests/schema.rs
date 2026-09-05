@@ -6,6 +6,7 @@
 //! surface as a control that moves nothing. This is the only place that
 //! notices, so it is deliberately literal about every field.
 
+use rackforge_plugin_api::{ParameterSchema, semantic_roles};
 use rf7_plugin::parameters::{self, Kind};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -120,6 +121,58 @@ fn the_schema_declares_exactly_the_parameters_the_plugin_answers_to() {
     }
 }
 
+/// RackForge's standard control vocabulary: a controller sends a role, never
+/// a parameter index, so this is what a KeyLab's knobs reach without the
+/// player mapping anything. The host's own validator reads the file, and the
+/// mapping is written out here so a renumbering cannot quietly point a knob
+/// at the wrong control.
+#[test]
+fn the_published_standard_controls_are_official_roles_on_the_right_parameters() {
+    let parsed: ParameterSchema =
+        serde_json::from_str(SCHEMA).expect("the host must accept the schema as it stands");
+    parsed.validate().expect("the host's own validator");
+
+    let schema = schema();
+    let ids: Vec<&str> = schema["parameters"]
+        .as_array()
+        .expect("an array")
+        .iter()
+        .map(|parameter| parameter["id"].as_str().expect("an id"))
+        .collect();
+    let published: Vec<(String, &str)> = parsed
+        .semantic_controls
+        .iter()
+        .map(|binding| {
+            (
+                binding.role.to_string(),
+                ids[binding.parameter_index as usize],
+            )
+        })
+        .collect();
+    assert_eq!(
+        published,
+        vec![
+            // A plugin's output level and a synthesizer's amplifier level are
+            // the same control on RF-7, so both roles reach it.
+            ("plugin.output.level".to_owned(), "gain"),
+            ("synth.amplifier.level".to_owned(), "gain"),
+            // RF-7 has no filter. Brightness is what a cutoff knob is for:
+            // the modulation depth every operator shares.
+            ("synth.filter.cutoff".to_owned(), "brightness"),
+            ("synth.lfo.rate".to_owned(), "lfo_rate"),
+            ("synth.lfo.depth".to_owned(), "lfo_depth"),
+            ("synth.lfo.delay".to_owned(), "lfo_delay"),
+        ]
+    );
+    for binding in &parsed.semantic_controls {
+        assert!(
+            semantic_roles::V1.contains(&binding.role.as_str()),
+            "{} is not in the host's published vocabulary",
+            binding.role
+        );
+    }
+}
+
 #[test]
 fn every_parameter_names_a_page_the_schema_declares() {
     let schema = schema();
@@ -146,7 +199,7 @@ fn every_parameter_names_a_page_the_schema_declares() {
 #[test]
 fn every_parameter_is_automatable_and_writable() {
     // A read-only or non-automatable control here would be a mistake rather
-    // than a decision: all seventeen are things a player or a sequencer moves.
+    // than a decision: every one is something a player or a sequencer moves.
     for parameter in schema()["parameters"].as_array().expect("an array") {
         let flags = &parameter["flags"];
         assert_eq!(

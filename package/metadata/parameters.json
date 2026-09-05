@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "pages": [
     { "id": "output", "name": "Output", "order": 0 },
     { "id": "performance", "name": "Performance", "order": 1 },
     { "id": "voice", "name": "Voice", "order": 2 },
-    { "id": "operators", "name": "Operators", "order": 3 }
+    { "id": "lfo", "name": "LFO", "order": 3 },
+    { "id": "operators", "name": "Operators", "order": 4 }
   ],
   "parameters": [
     {
@@ -116,6 +117,32 @@
       "kind": { "type": "boolean", "default": true },
       "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
       "suggested_control": "toggle"
+    },
+    {
+      "index": 17, "id": "lfo_rate", "name": "LFO Rate", "page": "lfo", "order": 0,
+      "kind": { "type": "float", "minimum": 0.25, "maximum": 4.0, "default": 1.0, "step": 0.01, "unit": "x", "taper": "logarithmic" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 18, "id": "lfo_depth", "name": "LFO Depth", "page": "lfo", "order": 1,
+      "kind": { "type": "float", "minimum": 0.0, "maximum": 1.0, "default": 0.0, "step": 0.01 },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
+    },
+    {
+      "index": 19, "id": "lfo_delay", "name": "LFO Delay", "page": "lfo", "order": 2,
+      "kind": { "type": "float", "minimum": 0.0, "maximum": 4.0, "default": 0.0, "step": 0.01, "unit": "s" },
+      "flags": { "automatable": true, "modulatable": false, "read_only": false, "advanced": false },
+      "suggested_control": "knob"
     }
+  ],
+  "semantic_controls": [
+    { "role": "plugin.output.level", "parameter_index": 0 },
+    { "role": "synth.amplifier.level", "parameter_index": 0 },
+    { "role": "synth.filter.cutoff", "parameter_index": 8 },
+    { "role": "synth.lfo.rate", "parameter_index": 17 },
+    { "role": "synth.lfo.depth", "parameter_index": 18 },
+    { "role": "synth.lfo.delay", "parameter_index": 19 }
   ]
 }
