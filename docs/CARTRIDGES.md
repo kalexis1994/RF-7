@@ -1,6 +1,6 @@
 # Cartridges
 
-RF-7 ships no voice data. The eight factory voices in
+RF-7 ships no voice data. The thirty-two factory voices in
 [`crates/rf7-voice/src/factory.rs`](../crates/rf7-voice/src/factory.rs) were
 written for RF-7 and are starting points, not recreations of anything. The
 voices a DX7 shipped with are Yamaha's; they are not in this repository and will
@@ -71,9 +71,7 @@ opens that path itself and receives only the bytes.
 
 Once a cartridge is delivered, RF-7 publishes its voices as the plugin's
 programs, `program-001` upwards, named as the cartridge names them and grouped
-into banks of thirty-two. Until then the eight factory voices stand in — eight
-programs, not eight padded out to thirty-two, because a slot holding INIT VOICE
-is a sine wave with a name.
+into banks of thirty-two. Until then the thirty-two factory voices stand in.
 
 ## Bytes that are out of range
 

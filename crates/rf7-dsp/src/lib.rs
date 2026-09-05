@@ -530,7 +530,9 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rf7_voice::{Cartridge, VOICES_PER_CARTRIDGE, decode_library, encode_bulk_dump};
+    use rf7_voice::{
+        Cartridge, FACTORY_VOICES, VOICES_PER_CARTRIDGE, decode_library, encode_bulk_dump,
+    };
 
     fn engine() -> Engine {
         Engine::new(48_000.0).expect("48 kHz is a supported rate")
@@ -642,18 +644,23 @@ mod tests {
 
     #[test]
     fn every_factory_program_sounds_and_stays_finite() {
-        assert_eq!(engine().program_count(), 8, "the factory library is eight");
-        for program in 0..8 {
+        assert_eq!(engine().program_count(), FACTORY_VOICES);
+        for program in 0..FACTORY_VOICES {
             let mut engine = engine();
             assert!(engine.select_program(program));
             assert!(!engine.program_name(program).is_empty());
             engine.note_on(0, 57, 100);
             engine.note_on(0, 64, 90);
-            let rendered = render(&mut engine, 24_000);
+            // Two seconds: a pad with a forty-rate attack is not audible in
+            // half a second, and that is what makes it a pad.
+            let rendered = render(&mut engine, 96_000);
             assert!(peak(&rendered) > 0.001, "program {program} is silent");
             assert!(rendered.iter().all(|sample| sample.is_finite()));
         }
-        assert!(!engine().select_program(8), "and offers no ninth");
+        assert!(
+            !engine().select_program(FACTORY_VOICES),
+            "and offers no more"
+        );
     }
 
     #[test]
@@ -690,10 +697,10 @@ mod tests {
         );
         engine.load_library(decode_library(&dump).expect("a dump decodes"));
         assert!(engine.select_program(28));
-        // Back to the eight factory voices: program 28 no longer exists.
-        engine.load_library(rf7_voice::factory_library());
-        assert_eq!(engine.program_count(), 8);
-        assert!(engine.program() < 8, "the selection followed the library");
+        // Down to a library of one: program 28 no longer exists.
+        engine.load_library(Library::from_voices(&[rf7_voice::factory_voice(2)]));
+        assert_eq!(engine.program_count(), 1);
+        assert_eq!(engine.program(), 0, "the selection followed the library");
         engine.note_on(0, 60, 100);
         assert!(peak(&render(&mut engine, 4_800)) > 0.0);
     }

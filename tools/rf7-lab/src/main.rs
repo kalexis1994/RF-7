@@ -17,7 +17,7 @@ use std::{
     time::Instant,
 };
 
-const HELP: &str = "RF-7 six-operator FM laboratory 0.1.3
+const HELP: &str = "RF-7 six-operator FM laboratory 0.1.4
 Usage:
   rf7-lab render --output PATH.wav [options]
   rf7-lab demo --output PATH.wav [--cartridge PATH.syx]
@@ -41,8 +41,8 @@ Render options:
                     reverses the banks to give the printed numbering.
 WAV is mono IEEE float, without normalisation or clipping. Every render also
 writes a JSON report beside it. No voice data ships with RF-7: without
---cartridge the eight RackForge-written factory voices are used.
-Demo: each factory voice in turn, one chord each.
+--cartridge the thirty-two RackForge-written factory voices are used.
+Demo: eight voices from --program onwards, one chord each.
 Stress: sixteen voices, 128-frame blocks, three seconds, with timings.
 ";
 

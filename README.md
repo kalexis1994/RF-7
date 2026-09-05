@@ -15,7 +15,7 @@ approximations, and [the model ledger](docs/MODEL.md) says which is which,
 one line per mapping. The largest open question is the modulation index, the one
 constant that sets how bright the whole instrument is.
 
-**No voice data ships here.** The eight factory voices were written for RF-7.
+**No voice data ships here.** The thirty-two factory voices were written for RF-7.
 The voices a DX7 shipped with are Yamaha's; RF-7 plays a cartridge you supply.
 
 ## Controls

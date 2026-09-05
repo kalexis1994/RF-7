@@ -1,5 +1,13 @@
 # Roadmap
 
+## 0.1.4 — done
+
+- A full factory cartridge: thirty-two voices written for RF-7 across most of
+  the algorithms, replacing the eight. Designed by construction and measured
+  offline, not by ear; every one sounds, none clips, none is a transcription.
+  They stand on the unmeasured modulation index and will be retouched when it
+  is settled.
+
 ## 0.1.3 — done
 
 - Chip images are read: a cartridge ROM dumped from its own chip has no System

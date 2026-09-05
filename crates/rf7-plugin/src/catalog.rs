@@ -133,7 +133,7 @@ impl Writer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rf7_voice::{Voice, factory_library, factory_voice};
+    use rf7_voice::{FACTORY_VOICES, Voice, factory_library, factory_voice};
 
     fn rendered(library: &Library) -> String {
         let mut buffer = [0u8; crate::TRANSFER_BYTES];
@@ -148,11 +148,14 @@ mod tests {
         let json = rendered(&factory_library());
         assert!(json.starts_with("{\"schema_version\":1,"));
         assert!(json.ends_with("]}"));
-        assert_eq!(json.matches("\"id\":\"program-").count(), 8);
+        assert_eq!(json.matches("\"id\":\"program-").count(), FACTORY_VOICES);
         assert!(json.contains("\"id\":\"program-001\""));
         assert!(json.contains("\"name\":\"RF TINES\""));
-        assert!(json.contains("\"id\":\"program-008\""));
-        assert!(!json.contains("program-009"), "no padding past the eighth");
+        assert!(json.contains("\"id\":\"program-032\""));
+        assert!(
+            !json.contains("program-033"),
+            "no padding past the cartridge"
+        );
         assert_eq!(json.matches("\"id\":\"bank-").count(), 1);
     }
 
