@@ -24,7 +24,7 @@ pub use tables::LEVEL_FULL;
 pub use voice::{MODULATION_CYCLES, NoteVoice, Performance, VoiceSetup};
 
 use lfo::Lfo;
-use rf7_voice::{Cartridge, VOICES_PER_CARTRIDGE, Voice, factory_cartridge, printable_name};
+use rf7_voice::{Library, Voice, factory_library, printable_name};
 
 /// Six operators, as on the instrument. Not a parameter.
 pub const OPERATORS: usize = 6;
@@ -217,7 +217,7 @@ pub struct Engine {
     /// A note whose key is up but whose channel still holds the pedal.
     sustained: [bool; POLYPHONY],
     sine: Sine,
-    cartridge: Cartridge,
+    library: Library,
     program: usize,
     patch: Voice,
     lfo: Lfo,
@@ -246,13 +246,13 @@ impl Engine {
         if !sample_rate.is_finite() || !(SAMPLE_RATE_MIN..=SAMPLE_RATE_MAX).contains(&sample_rate) {
             return Err(EngineError::SampleRate);
         }
-        let cartridge = factory_cartridge();
-        let patch = *cartridge.voice(0).expect("a cartridge has 32 voices");
+        let library = factory_library();
+        let patch = *library.voice(0).expect("a library is never empty");
         let mut engine = Self {
             voices: [NoteVoice::default(); POLYPHONY],
             sustained: [false; POLYPHONY],
             sine: Sine::new(),
-            cartridge,
+            library,
             program: 0,
             patch,
             lfo: Lfo::new(&patch.lfo, sample_rate),
@@ -304,15 +304,25 @@ impl Engine {
         self.controls
     }
 
-    /// Replace the whole cartridge. Sounding notes keep the patch they began
-    /// with, which is what lets a program change land mid-phrase.
-    pub fn load_cartridge(&mut self, cartridge: Cartridge) {
-        self.cartridge = cartridge;
-        self.select_program(self.program.min(VOICES_PER_CARTRIDGE - 1));
+    /// Replace every program at once. Sounding notes keep the patch they began
+    /// with, which is what lets this land mid-phrase.
+    ///
+    /// The selected program is carried across where it still exists, and
+    /// otherwise falls back to the first: a library can be shorter than the
+    /// one it replaces, and a program index pointing past the end would be a
+    /// silent instrument with no explanation.
+    pub fn load_library(&mut self, library: Library) {
+        self.library = library;
+        let program = self.program.min(self.library.len().saturating_sub(1));
+        self.select_program(program);
+    }
+
+    pub fn library(&self) -> &Library {
+        &self.library
     }
 
     pub fn program_count(&self) -> usize {
-        VOICES_PER_CARTRIDGE
+        self.library.len()
     }
 
     pub fn program(&self) -> usize {
@@ -320,13 +330,13 @@ impl Engine {
     }
 
     pub fn program_name(&self, index: usize) -> &str {
-        self.cartridge
+        self.library
             .voice(index)
             .map_or("", |voice| printable_name(&voice.name))
     }
 
     pub fn select_program(&mut self, index: usize) -> bool {
-        let Some(voice) = self.cartridge.voice(index) else {
+        let Some(voice) = self.library.voice(index) else {
             return false;
         };
         self.program = index;
@@ -520,7 +530,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rf7_voice::{decode_bulk_dump, encode_bulk_dump};
+    use rf7_voice::{Cartridge, VOICES_PER_CARTRIDGE, decode_library, encode_bulk_dump};
 
     fn engine() -> Engine {
         Engine::new(48_000.0).expect("48 kHz is a supported rate")
@@ -632,6 +642,7 @@ mod tests {
 
     #[test]
     fn every_factory_program_sounds_and_stays_finite() {
+        assert_eq!(engine().program_count(), 8, "the factory library is eight");
         for program in 0..8 {
             let mut engine = engine();
             assert!(engine.select_program(program));
@@ -642,7 +653,7 @@ mod tests {
             assert!(peak(&rendered) > 0.001, "program {program} is silent");
             assert!(rendered.iter().all(|sample| sample.is_finite()));
         }
-        assert!(!engine().select_program(VOICES_PER_CARTRIDGE));
+        assert!(!engine().select_program(8), "and offers no ninth");
     }
 
     #[test]
@@ -663,8 +674,26 @@ mod tests {
         let mut voices = [rf7_voice::factory_voice(3); VOICES_PER_CARTRIDGE];
         voices[0].name = *b"LOADED    ";
         let dump = encode_bulk_dump(&Cartridge::from_voices(voices), 0);
-        engine.load_cartridge(decode_bulk_dump(&dump).expect("our own dump decodes"));
+        engine.load_library(decode_library(&dump).expect("our own dump decodes"));
+        assert_eq!(engine.program_count(), VOICES_PER_CARTRIDGE);
         assert_eq!(engine.program_name(0), "LOADED");
+        engine.note_on(0, 60, 100);
+        assert!(peak(&render(&mut engine, 4_800)) > 0.0);
+    }
+
+    #[test]
+    fn a_shorter_library_does_not_leave_the_program_past_its_end() {
+        let mut engine = engine();
+        let dump = encode_bulk_dump(
+            &Cartridge::from_voices([rf7_voice::factory_voice(1); VOICES_PER_CARTRIDGE]),
+            0,
+        );
+        engine.load_library(decode_library(&dump).expect("a dump decodes"));
+        assert!(engine.select_program(28));
+        // Back to the eight factory voices: program 28 no longer exists.
+        engine.load_library(rf7_voice::factory_library());
+        assert_eq!(engine.program_count(), 8);
+        assert!(engine.program() < 8, "the selection followed the library");
         engine.note_on(0, 60, 100);
         assert!(peak(&render(&mut engine, 4_800)) > 0.0);
     }
@@ -825,13 +854,13 @@ mod tests {
         let mut voice = Voice::init();
         voice.operators[0].amp_mod_sensitivity = 3;
         voice.pitch_mod_sensitivity = 7;
-        let cartridge = Cartridge::from_voices([voice; VOICES_PER_CARTRIDGE]);
+        let library = rf7_voice::Library::from_voices(&[voice]);
         let sounded = |target: Target| {
             let mut engine = engine_with(Controls {
                 wheel_target: target,
                 ..Controls::default()
             });
-            engine.load_cartridge(cartridge);
+            engine.load_library(library.clone());
             engine.control_change(0, CONTROL_MODULATION, 1.0);
             engine.note_on(0, 60, 100);
             render(&mut engine, 24_000)

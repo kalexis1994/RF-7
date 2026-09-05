@@ -12,15 +12,45 @@ What RF-7 does instead is read a cartridge you already have.
 
 | File | Bytes | Contents |
 | --- | ---: | --- |
-| Cartridge bulk dump | 4104 | 32 packed voices |
+| Cartridge bulk dumps | any multiple of 4104 | 32 packed voices each |
 | Single voice dump | 163 | one unpacked voice |
+| Chip image | any multiple of 4096 | 32 packed voices per bank, no framing |
 
-Both are ordinary DX7 System Exclusive files, usually named `.syx`. The
-sub-status channel a dump was made on is ignored: RF-7 reads files, not a MIDI
-cable, and the channel says nothing about the voices in it.
+The first two are ordinary DX7 System Exclusive files, usually named `.syx`.
+The sub-status channel a dump was made on is ignored: RF-7 reads files, not a
+MIDI cable, and the channel says nothing about the voices in it. Collections
+are commonly distributed as several dumps in one file, so several is what RF-7
+reads; one damaged dump refuses the whole file rather than loading half of it.
 
-A single voice fills all thirty-two slots, so a patch exported on its own is
-playable without building a cartridge around it.
+The third is a cartridge ROM read straight off its chip: the same packed voices
+with no System Exclusive header, no checksum and no terminator. There is no
+room for a checksum in a chip image, so a bank is accepted on its shape alone —
+the right length, and every byte seven-bit — and the corrections count below is
+then the only quality signal there is.
+
+A single voice is a library of one, not one voice repeated thirty-two times.
+
+RF-7 offers up to **128 programs**. A file holding more is read and capped, and
+the laboratory reports how many the file actually contained.
+
+## Which bank comes first
+
+A cartridge holds bank B in the lower half of its address space, so a chip
+image *opens* with the voices the front panel numbers B1..B32. Read in file
+order, program 1 of `voicerom1.bin` is PIANO 4, not BRASS 1.
+
+RF-7 does not guess at this, because not every file of that length is a
+cartridge ROM. The laboratory offers the choice:
+
+```text
+cargo run --release -p rf7-lab -- cartridge cartridges/voicerom1.bin
+cargo run --release -p rf7-lab -- cartridge cartridges/voicerom1.bin --bank-order swapped
+```
+
+`swapped` reverses the 4096-byte banks, which gives the numbering printed on
+the cartridge: program 11 is then E.PIANO 1. Inside RackForge there is no such
+switch, so install the bank you want as its own 4096-byte file if the archive
+provides one.
 
 ## In the laboratory
 
@@ -29,8 +59,8 @@ cargo run --release -p rf7-lab -- cartridge cartridges/mine.syx
 cargo run --release -p rf7-lab -- render --output renders/slot-7.wav --cartridge cartridges/mine.syx --program 7
 ```
 
-`cartridge` lists all thirty-two names with their algorithm and feedback, and
-says how many bytes were out of range.
+`cartridge` lists every voice with its algorithm and feedback, marks the bank
+boundaries, and says how many bytes were out of range.
 
 ## In RackForge
 
@@ -39,9 +69,11 @@ location is `<data-root>/plugins/org.rackforge.rf7/cartridges/current.syx`.
 Install a `.syx` through RackForge's own resource installation; RF-7 never
 opens that path itself and receives only the bytes.
 
-Once a cartridge is delivered, RF-7 publishes its thirty-two voices as the
-plugin's thirty-two programs, `program-01` to `program-32`, named as the
-cartridge names them. Until then the eight factory voices stand in.
+Once a cartridge is delivered, RF-7 publishes its voices as the plugin's
+programs, `program-001` upwards, named as the cartridge names them and grouped
+into banks of thirty-two. Until then the eight factory voices stand in — eight
+programs, not eight padded out to thirty-two, because a slot holding INIT VOICE
+is a sine wave with a name.
 
 ## Bytes that are out of range
 

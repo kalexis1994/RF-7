@@ -1,10 +1,32 @@
 //! The cartridge container as a whole: what round-trips, and what is refused.
 
 use rf7_voice::{
-    BULK_DUMP_LENGTH, Cartridge, FACTORY_VOICES, SysexError, VOICE_DUMP_LENGTH,
-    VOICES_PER_CARTRIDGE, checksum, decode_bulk_dump, decode_voice_dump, encode_bulk_dump,
-    encode_voice_dump, factory_cartridge, factory_voice, printable_name,
+    BULK_DUMP_LENGTH, Cartridge, FACTORY_VOICES, Library, MAX_VOICES, RAW_BANK_LENGTH, SysexError,
+    VOICE_DUMP_LENGTH, VOICES_PER_CARTRIDGE, checksum, decode_bulk_dump, decode_library,
+    decode_voice_dump, encode_bulk_dump, encode_packed, encode_voice_dump, factory_library,
+    factory_voice, printable_name,
 };
+
+/// The eight factory voices repeated to fill a cartridge, so a test has
+/// thirty-two distinguishable slots without any INIT padding.
+fn factory_cartridge() -> Cartridge {
+    let mut voices = [factory_voice(0); VOICES_PER_CARTRIDGE];
+    for (slot, voice) in voices.iter_mut().enumerate() {
+        *voice = factory_voice(slot % FACTORY_VOICES);
+    }
+    Cartridge::from_voices(voices)
+}
+
+/// One bank as a chip holds it: thirty-two packed voices, no framing.
+fn raw_bank(first: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for slot in 0..VOICES_PER_CARTRIDGE {
+        bytes.extend_from_slice(&encode_packed(&factory_voice(
+            (first + slot) % FACTORY_VOICES,
+        )));
+    }
+    bytes
+}
 
 #[test]
 fn a_cartridge_survives_the_round_trip_through_system_exclusive() {
@@ -127,4 +149,107 @@ fn a_cartridge_built_from_voices_reports_no_corrections() {
     let cartridge = Cartridge::from_voices(voices);
     assert!(cartridge.corrections().is_clean());
     assert_eq!(cartridge.voice(31), Some(&factory_voice(0)));
+}
+
+#[test]
+fn a_raw_bank_is_read_without_a_checksum_to_lean_on() {
+    // A chip image has no room for a checksum, so shape is all there is: the
+    // right length, and every byte seven-bit.
+    let library = decode_library(&raw_bank(0)).expect("a raw bank must open");
+    assert_eq!(library.len(), VOICES_PER_CARTRIDGE);
+    assert_eq!(library.found(), VOICES_PER_CARTRIDGE);
+    assert!(library.corrections().is_clean());
+    assert_eq!(printable_name(&library.voice(0).unwrap().name), "RF TINES");
+}
+
+#[test]
+fn two_raw_banks_become_sixty_four_voices_in_file_order() {
+    let mut bytes = raw_bank(0);
+    bytes.extend_from_slice(&raw_bank(1));
+    let library = decode_library(&bytes).expect("two banks must open");
+    assert_eq!(library.len(), 64);
+    assert_eq!(library.voice(0), Some(&factory_voice(0)));
+    assert_eq!(library.voice(32), Some(&factory_voice(1)));
+}
+
+#[test]
+fn concatenated_bulk_dumps_are_read_end_to_end() {
+    // Collections are distributed as one file holding several dumps.
+    let mut bytes = encode_bulk_dump(&factory_cartridge(), 0).to_vec();
+    bytes.extend_from_slice(&encode_bulk_dump(
+        &Cartridge::from_voices([factory_voice(3); VOICES_PER_CARTRIDGE]),
+        9,
+    ));
+    let library = decode_library(&bytes).expect("two dumps must open");
+    assert_eq!(library.len(), 64);
+    assert_eq!(library.voice(0), Some(&factory_voice(0)));
+    assert_eq!(library.voice(32), Some(&factory_voice(3)));
+    // One damaged dump refuses the whole file rather than half-loading it.
+    bytes[BULK_DUMP_LENGTH + 100] ^= 1;
+    assert!(matches!(
+        decode_library(&bytes),
+        Err(SysexError::Checksum { .. })
+    ));
+}
+
+#[test]
+fn a_single_voice_dump_is_a_library_of_one() {
+    let bytes = encode_voice_dump(&factory_voice(2), 0);
+    let library = decode_library(&bytes).expect("a voice dump must open");
+    assert_eq!(library.len(), 1);
+    assert_eq!(library.voice(0), Some(&factory_voice(2)));
+    assert_eq!(library.voice(1), None);
+}
+
+#[test]
+fn more_voices_than_rf7_offers_are_counted_and_capped() {
+    let mut bytes = Vec::new();
+    for bank in 0..6 {
+        bytes.extend_from_slice(&raw_bank(bank));
+    }
+    let library = decode_library(&bytes).expect("six banks must open");
+    assert_eq!(library.len(), MAX_VOICES);
+    assert_eq!(library.found(), 6 * VOICES_PER_CARTRIDGE);
+    assert_eq!(library.voice(MAX_VOICES), None);
+}
+
+#[test]
+fn a_length_rf7_does_not_recognise_is_refused() {
+    for length in [1usize, 100, 4095, 4097, 4103, 4105, 8191] {
+        assert!(
+            matches!(
+                decode_library(&vec![0u8; length]),
+                Err(SysexError::Length { .. })
+            ),
+            "{length} bytes was accepted"
+        );
+    }
+    let mut bank = raw_bank(0);
+    bank[500] = 0x80;
+    assert_eq!(
+        decode_library(&bank),
+        Err(SysexError::DataBit { offset: 500 })
+    );
+}
+
+#[test]
+fn a_library_reports_what_it_had_to_clamp() {
+    // Unwritten chip memory: every byte set, which is a legal bank shape.
+    let library = decode_library(&[0x7f; RAW_BANK_LENGTH]).expect("a valid shape");
+    assert_eq!(library.len(), VOICES_PER_CARTRIDGE);
+    assert!(!library.corrections().is_clean());
+    assert!(!library.voice_corrections(0).is_clean());
+    assert!(library.voice_corrections(VOICES_PER_CARTRIDGE).is_clean());
+}
+
+#[test]
+fn the_factory_library_needs_no_file_at_all() {
+    let library = factory_library();
+    assert_eq!(library.len(), FACTORY_VOICES);
+    assert!(library.corrections().is_clean());
+    assert_eq!(
+        Library::default().len(),
+        1,
+        "never empty, never a special case"
+    );
 }

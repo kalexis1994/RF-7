@@ -7,8 +7,8 @@
 //! calibrated recreations of anything.
 
 use crate::{
+    library::Library,
     parameters::{OPERATORS, Operator, Voice},
-    sysex::{Cartridge, VOICES_PER_CARTRIDGE},
 };
 
 pub const FACTORY_VOICES: usize = 8;
@@ -28,13 +28,17 @@ pub fn factory_voice(index: usize) -> Voice {
     }
 }
 
-/// The factory voices in the first slots of a cartridge, INIT VOICE after.
-pub fn factory_cartridge() -> Cartridge {
-    let mut voices = [Voice::init(); VOICES_PER_CARTRIDGE];
-    for (index, voice) in voices.iter_mut().enumerate().take(FACTORY_VOICES) {
+/// The factory voices, and nothing else.
+///
+/// Exactly eight, not eight padded out to a cartridge's thirty-two: a slot
+/// holding INIT VOICE is a sine wave with a name, and offering twenty-four of
+/// them as programs would be worse than offering none.
+pub fn factory_library() -> Library {
+    let mut voices = [Voice::init(); FACTORY_VOICES];
+    for (index, voice) in voices.iter_mut().enumerate() {
         *voice = factory_voice(index);
     }
-    Cartridge::from_voices(voices)
+    Library::from_voices(&voices)
 }
 
 /// `operators` is given in panel order: index 0 is OP1.
@@ -229,11 +233,13 @@ mod tests {
     }
 
     #[test]
-    fn the_factory_cartridge_fills_the_remaining_slots_with_init() {
-        let cartridge = factory_cartridge();
-        assert!(cartridge.corrections().is_clean());
-        assert_eq!(cartridge.voice(0), Some(&factory_voice(0)));
-        assert_eq!(cartridge.voice(FACTORY_VOICES), Some(&Voice::init()));
-        assert_eq!(cartridge.voice(VOICES_PER_CARTRIDGE), None);
+    fn the_factory_library_offers_the_eight_voices_and_no_padding() {
+        let library = factory_library();
+        assert_eq!(library.len(), FACTORY_VOICES);
+        assert_eq!(library.found(), FACTORY_VOICES);
+        assert!(library.corrections().is_clean());
+        assert_eq!(library.voice(0), Some(&factory_voice(0)));
+        assert_eq!(library.voice(FACTORY_VOICES - 1), Some(&factory_voice(7)));
+        assert_eq!(library.voice(FACTORY_VOICES), None);
     }
 }

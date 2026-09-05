@@ -15,13 +15,15 @@ use rackforge_plugin_sdk::{
     MIDI2_KIND_PROGRAM_CHANGE, MidiEvent, MidiEvent2, ParameterEvent, Processor, export_processor,
 };
 use rf7_dsp::Engine;
-use rf7_voice::{
-    BULK_DUMP_LENGTH, Cartridge, decode_bulk_dump, decode_voice_dump, factory_cartridge,
-};
+use rf7_voice::{Library, MAX_VOICES, decode_library, factory_library};
 
 pub const MAX_FRAMES: u32 = 4096;
 pub const MAX_EVENTS: usize = 256;
-pub const TRANSFER_BYTES: usize = 16_384;
+pub const TRANSFER_BYTES: usize = 32_768;
+/// The largest library file RF-7 will take from the host. Four cartridges of
+/// bulk dumps is already past [`MAX_VOICES`]; the rest is slack so an oversized
+/// collection is read and capped rather than refused for its size alone.
+pub const MAX_RESOURCE_BYTES: usize = 65_536;
 /// Version 2 carries every parameter. Version 1, which carried only the gain
 /// and the program, is still accepted so a session saved by 0.1.0 opens.
 pub const STATE_VERSION: u32 = 2;
@@ -34,7 +36,7 @@ pub const RESOURCE_CARTRIDGE: &str = "cartridge";
 
 pub struct Rf7Processor {
     engine: Option<Box<Engine>>,
-    cartridge: Cartridge,
+    library: Library,
     program: usize,
     /// One entry per declared parameter, always in its declared range.
     values: [f64; PARAMETER_COUNT],
@@ -49,7 +51,7 @@ impl Default for Rf7Processor {
     fn default() -> Self {
         Self {
             engine: None,
-            cartridge: factory_cartridge(),
+            library: factory_library(),
             program: 0,
             values: parameters::defaults(),
             incoming: Vec::new(),
@@ -63,7 +65,12 @@ impl Default for Rf7Processor {
 impl Rf7Processor {
     /// The programs RackForge should offer, as Preset Catalog JSON.
     pub fn catalog(&self, destination: &mut [u8]) -> Option<usize> {
-        catalog::write(&self.cartridge, destination)
+        catalog::write(&self.library, destination)
+    }
+
+    /// How many programs this instance currently offers.
+    pub fn program_count(&self) -> usize {
+        self.library.len()
     }
 
     fn midi1(&mut self, event: &MidiEvent) {
@@ -147,10 +154,11 @@ impl Rf7Processor {
         }
     }
 
-    fn adopt(&mut self, cartridge: Cartridge) {
-        self.cartridge = cartridge;
+    fn adopt(&mut self, library: Library) {
+        self.library = library;
+        self.program = self.program.min(self.library.len().saturating_sub(1));
         if let Some(engine) = &mut self.engine {
-            engine.load_cartridge(self.cartridge);
+            engine.load_library(self.library.clone());
             engine.select_program(self.program);
         }
     }
@@ -164,7 +172,7 @@ impl Processor for Rf7Processor {
         let Ok(mut engine) = Engine::new(rate as f32) else {
             return false;
         };
-        engine.load_cartridge(self.cartridge);
+        engine.load_library(self.library.clone());
         engine.select_program(self.program);
         self.engine = Some(Box::new(engine));
         self.apply();
@@ -193,7 +201,7 @@ impl Processor for Rf7Processor {
     }
 
     fn begin_resource(&mut self, id: &str, total_bytes: u64) -> bool {
-        if id != RESOURCE_CARTRIDGE || total_bytes > BULK_DUMP_LENGTH as u64 {
+        if id != RESOURCE_CARTRIDGE || total_bytes > MAX_RESOURCE_BYTES as u64 {
             return false;
         }
         self.incoming.clear();
@@ -207,7 +215,7 @@ impl Processor for Rf7Processor {
         // holding whatever happened to be at that offset before.
         if !self.receiving
             || offset != self.incoming.len() as u64
-            || self.incoming.len() + bytes.len() > BULK_DUMP_LENGTH
+            || self.incoming.len() + bytes.len() > MAX_RESOURCE_BYTES
         {
             self.receiving = false;
             return false;
@@ -221,26 +229,24 @@ impl Processor for Rf7Processor {
             return false;
         }
         self.receiving = false;
-        // A single-voice dump is accepted too, and fills every slot, so a
-        // patch a user exported on its own is playable without a cartridge.
-        let cartridge = match decode_bulk_dump(&self.incoming) {
-            Ok(cartridge) => cartridge,
-            Err(_) => match decode_voice_dump(&self.incoming) {
-                Ok(decoded) => Cartridge::from_voices([decoded.voice; 32]),
-                Err(_) => return false,
-            },
+        // Bulk dumps, a single voice, or a headerless chip image: whichever
+        // shape the user installed, the programs come out the same way.
+        let Ok(library) = decode_library(&self.incoming) else {
+            self.incoming = Vec::new();
+            return false;
         };
         self.incoming = Vec::new();
-        self.adopt(cartridge);
+        self.adopt(library);
         true
     }
 
     fn write_program_catalog(&mut self, destination: &mut [u8]) -> Option<usize> {
-        catalog::write(&self.cartridge, destination)
+        catalog::write(&self.library, destination)
     }
 
     fn load_preset(&mut self, id: &str) -> bool {
-        let Some(program) = catalog::program_index(id) else {
+        let Some(program) = catalog::program_index(id).filter(|slot| *slot < self.library.len())
+        else {
             return false;
         };
         self.program = program;
@@ -281,10 +287,12 @@ impl Processor for Rf7Processor {
             },
             _ => return false,
         };
-        self.program = program;
+        // A state can name a program a shorter library does not have; the
+        // level and the controls still restore, and the selection falls back.
+        self.program = program.min(self.library.len().saturating_sub(1));
         self.values = values;
         if let Some(engine) = &mut self.engine {
-            engine.select_program(program);
+            engine.select_program(self.program);
         }
         self.apply();
         true
@@ -408,7 +416,7 @@ fn read_state(state: &[u8]) -> Option<(usize, [f64; PARAMETER_COUNT])> {
     }
     let program = u32::from_le_bytes(state[8..12].try_into().ok()?) as usize;
     let count = u32::from_le_bytes(state[12..16].try_into().ok()?) as usize;
-    if program >= 32 || count > PARAMETER_COUNT || state.len() != STATE_HEADER + count * 8 {
+    if program >= MAX_VOICES || count > PARAMETER_COUNT || state.len() != STATE_HEADER + count * 8 {
         return None;
     }
     let mut values = parameters::defaults();
@@ -430,7 +438,7 @@ fn read_first_state(state: &[u8]) -> Option<(usize, [f64; PARAMETER_COUNT])> {
     }
     let gain = f64::from_le_bytes(state[8..16].try_into().ok()?);
     let program = u32::from_le_bytes(state[16..20].try_into().ok()?) as usize;
-    if program >= 32 || !parameters::is_valid(parameters::GAIN, gain) {
+    if program >= MAX_VOICES || !parameters::is_valid(parameters::GAIN, gain) {
         return None;
     }
     let mut values = parameters::defaults();
@@ -440,7 +448,7 @@ fn read_first_state(state: &[u8]) -> Option<(usize, [f64; PARAMETER_COUNT])> {
 
 export_processor!(Rf7Processor,
     max_frames = 4096, max_input_channels = 0, max_output_channels = 2,
-    max_midi_events = 256, max_parameter_events = 256, max_transfer_bytes = 16_384,
+    max_midi_events = 256, max_parameter_events = 256, max_transfer_bytes = 32_768,
     midi2 = {
         max_events = 256,
         families = MIDI_FAMILY_NOTE

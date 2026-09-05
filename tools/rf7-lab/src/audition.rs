@@ -15,7 +15,7 @@ use std::{
 
 const ID: &str = "org.rackforge.rf7";
 const INSTANCE: &str = "desktop.org.rackforge.rf7";
-const PROGRAM: &str = "program-01";
+const PROGRAM: &str = "program-001";
 const MARKER: &str = "RF-7 audition library v1\n";
 
 pub fn run(args: &[String]) -> Result<(), Box<dyn Error>> {

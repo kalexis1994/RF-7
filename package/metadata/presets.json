@@ -2,8 +2,8 @@
   "schema_version": 1,
   "banks": [{ "id": "cartridge", "name": "Cartridge", "order": 0 }],
   "presets": [{
-    "id": "program-01", "name": "Program 1", "bank": "cartridge",
+    "id": "program-001", "name": "Program 1", "bank": "cartridge",
     "category": "FM", "order": 0, "tags": ["default"],
-    "description": "The first voice of the installed cartridge. RF-7 publishes the full list of thirty-two once a cartridge is delivered."
+    "description": "The first voice of the installed library. RF-7 publishes the whole list once a cartridge is delivered, however many voices it held."
   }]
 }

@@ -10,12 +10,14 @@
 #![no_std]
 
 mod factory;
+mod library;
 mod packed;
 mod parameters;
 mod sysex;
 mod unpacked;
 
-pub use factory::{FACTORY_VOICES, factory_cartridge, factory_voice};
+pub use factory::{FACTORY_VOICES, factory_library, factory_voice};
+pub use library::{Library, MAX_VOICES, RAW_BANK_LENGTH, decode_library};
 pub use packed::{PACKED_VOICE_LENGTH, decode_packed, encode_packed};
 pub use parameters::{
     Curve, Lfo, LfoWaveform, NAME_LENGTH, OPERATORS, Operator, Voice, printable_name,

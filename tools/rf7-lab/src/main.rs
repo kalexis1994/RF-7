@@ -7,8 +7,7 @@ mod wav;
 
 use rf7_dsp::{Engine, POLYPHONY, SAMPLE_RATE_MAX, SAMPLE_RATE_MIN};
 use rf7_voice::{
-    BULK_DUMP_LENGTH, Cartridge, VOICE_DUMP_LENGTH, VOICES_PER_CARTRIDGE, decode_bulk_dump,
-    decode_voice_dump, printable_name,
+    Library, MAX_VOICES, RAW_BANK_LENGTH, VOICES_PER_CARTRIDGE, decode_library, printable_name,
 };
 use serde_json::json;
 use std::{
@@ -18,7 +17,7 @@ use std::{
     time::Instant,
 };
 
-const HELP: &str = "RF-7 six-operator FM laboratory 0.1.2
+const HELP: &str = "RF-7 six-operator FM laboratory 0.1.3
 Usage:
   rf7-lab render --output PATH.wav [options]
   rf7-lab demo --output PATH.wav [--cartridge PATH.syx]
@@ -28,13 +27,18 @@ Usage:
   rf7-lab package
   rf7-lab audition [--prepare-only]
 Render options:
-  --program N       Cartridge slot 1..32 (default 1)
+  --program N       Program 1..128 (default 1)
   --note N          MIDI 0..127 (default 60, middle C)
   --velocity N      MIDI 1..127 (default 100)
   --sample-rate HZ  8000..192000 (default 48000)
   --seconds S       Duration 0.05..60 (default 4)
   --hold S          Key hold, shorter than the duration (default 2)
-  --cartridge PATH  A DX7 cartridge or single-voice System Exclusive file
+  --cartridge PATH  A cartridge file: System Exclusive dumps, a single voice,
+                    or a headerless chip image of one or more 4096-byte banks
+  --bank-order X    file (default) or swapped. A cartridge ROM holds bank B in
+                    the lower half of its address space, so a chip image opens
+                    with the voices the front panel numbers B1..B32; swapped
+                    reverses the banks to give the printed numbering.
 WAV is mono IEEE float, without normalisation or clipping. Every render also
 writes a JSON report beside it. No voice data ships with RF-7: without
 --cartridge the eight RackForge-written factory voices are used.
@@ -60,7 +64,7 @@ fn dispatch(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         "demo" => demo(&Options::parse(rest, true)?),
         "stress" => stress(&Options::parse(rest, false)?),
         "inspect" => inspect(&single_path(rest)?),
-        "cartridge" => describe_cartridge(&single_path(rest)?),
+        "cartridge" => describe_cartridge(&Options::for_cartridge(rest)?),
         "package" => package::build(),
         "audition" => audition::run(rest),
         "help" | "--help" | "-h" => {
@@ -81,6 +85,7 @@ fn single_path(arguments: &[String]) -> Result<PathBuf, Box<dyn Error>> {
 struct Options {
     output: Option<PathBuf>,
     cartridge: Option<PathBuf>,
+    swap_banks: bool,
     program: usize,
     note: u8,
     velocity: u8,
@@ -90,10 +95,22 @@ struct Options {
 }
 
 impl Options {
+    /// `cartridge PATH [--bank-order X]`: the path is positional there.
+    fn for_cartridge(arguments: &[String]) -> Result<Self, Box<dyn Error>> {
+        let (path, rest) = arguments.split_first().ok_or("expected a cartridge path")?;
+        let mut options = Self::parse(rest, false)?;
+        if options.cartridge.is_some() {
+            return Err("give the cartridge path once, not also as --cartridge".into());
+        }
+        options.cartridge = Some(PathBuf::from(path));
+        Ok(options)
+    }
+
     fn parse(arguments: &[String], wants_output: bool) -> Result<Self, Box<dyn Error>> {
         let mut options = Self {
             output: None,
             cartridge: None,
+            swap_banks: false,
             program: 0,
             note: 60,
             velocity: 100,
@@ -114,10 +131,17 @@ impl Options {
             match flag {
                 "--output" => options.output = Some(PathBuf::from(value)),
                 "--cartridge" => options.cartridge = Some(PathBuf::from(value)),
+                "--bank-order" => {
+                    options.swap_banks = match value.as_str() {
+                        "file" => false,
+                        "swapped" => true,
+                        _ => return Err("--bank-order is file or swapped".into()),
+                    };
+                }
                 "--program" => {
                     let slot: usize = value.parse()?;
-                    if !(1..=VOICES_PER_CARTRIDGE).contains(&slot) {
-                        return Err("--program is a cartridge slot 1..32".into());
+                    if !(1..=MAX_VOICES).contains(&slot) {
+                        return Err("--program is 1..128".into());
                     }
                     options.program = slot - 1;
                 }
@@ -164,29 +188,40 @@ impl Options {
 fn engine(options: &Options) -> Result<Engine, Box<dyn Error>> {
     let mut engine = Engine::new(options.sample_rate)?;
     if let Some(path) = &options.cartridge {
-        engine.load_cartridge(read_cartridge(path)?);
+        engine.load_library(read_library(path, options.swap_banks)?);
     }
     if !engine.select_program(options.program) {
-        return Err("no such program".into());
+        return Err(format!(
+            "no program {}; this library holds {}",
+            options.program + 1,
+            engine.program_count()
+        )
+        .into());
     }
     Ok(engine)
 }
 
-/// Read either container. Nothing here ever writes a cartridge back to disk.
-fn read_cartridge(path: &Path) -> Result<Cartridge, Box<dyn Error>> {
+/// Read whatever shape the file is. Nothing here ever writes one back.
+fn read_library(path: &Path, swap: bool) -> Result<Library, Box<dyn Error>> {
     let bytes = fs::read(path)?;
-    match bytes.len() {
-        BULK_DUMP_LENGTH => Ok(decode_bulk_dump(&bytes)?),
-        VOICE_DUMP_LENGTH => {
-            let decoded = decode_voice_dump(&bytes)?;
-            Ok(Cartridge::from_voices([decoded.voice; VOICES_PER_CARTRIDGE]))
-        }
-        length => Err(format!(
-            "{} is {length} bytes; expected a {BULK_DUMP_LENGTH}-byte cartridge or a {VOICE_DUMP_LENGTH}-byte voice dump",
-            path.display()
-        )
-        .into()),
+    let bytes = if swap {
+        swap_banks(&bytes).ok_or("--bank-order swapped needs whole 4096-byte banks")?
+    } else {
+        bytes
+    };
+    decode_library(&bytes).map_err(|error| format!("{}: {error}", path.display()).into())
+}
+
+/// The same bytes with their 4096-byte banks in the opposite order.
+fn swap_banks(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(RAW_BANK_LENGTH) {
+        return None;
     }
+    let mut swapped = Vec::with_capacity(bytes.len());
+    for bank in bytes.as_chunks::<RAW_BANK_LENGTH>().0.iter().rev() {
+        swapped.extend_from_slice(bank);
+    }
+    Some(swapped)
 }
 
 fn render(options: &Options) -> Result<(), Box<dyn Error>> {
@@ -242,7 +277,7 @@ fn demo(options: &Options) -> Result<(), Box<dyn Error>> {
     let hold = (1.6 * f64::from(rate)) as usize;
     let mut samples = Vec::new();
     let mut played = Vec::new();
-    for program in 0..8 {
+    for program in options.program..options.program + 8 {
         if !engine.select_program(program) {
             break;
         }
@@ -328,10 +363,23 @@ fn inspect(path: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn describe_cartridge(path: &Path) -> Result<(), Box<dyn Error>> {
-    let cartridge = read_cartridge(path)?;
+fn describe_cartridge(options: &Options) -> Result<(), Box<dyn Error>> {
+    let path = options.cartridge.as_deref().expect("checked while parsing");
+    let library = read_library(path, options.swap_banks)?;
     println!("{}", path.display());
-    let corrections = cartridge.corrections();
+    println!(
+        "  {} voices{}",
+        library.len(),
+        if library.found() > library.len() {
+            format!(
+                ", of the {} in the file; RF-7 offers {MAX_VOICES}",
+                library.found()
+            )
+        } else {
+            String::new()
+        }
+    );
+    let corrections = library.corrections();
     if corrections.is_clean() {
         println!("  every byte was already in range");
     } else {
@@ -340,11 +388,13 @@ fn describe_cartridge(path: &Path) -> Result<(), Box<dyn Error>> {
             corrections.0
         );
     }
-    for slot in 0..VOICES_PER_CARTRIDGE {
-        let voice = cartridge.voice(slot).expect("a cartridge has 32 voices");
-        let clamped = cartridge.voice_corrections(slot);
+    for (slot, voice) in library.voices().iter().enumerate() {
+        if slot > 0 && slot.is_multiple_of(VOICES_PER_CARTRIDGE) {
+            println!("  -- bank {} --", slot / VOICES_PER_CARTRIDGE + 1);
+        }
+        let clamped = library.voice_corrections(slot);
         println!(
-            "  {:>2}  {:<10}  algorithm {:>2}  feedback {}{}",
+            "  {:>3}  {:<10}  algorithm {:>2}  feedback {}{}",
             slot + 1,
             printable_name(&voice.name),
             voice.algorithm + 1,

@@ -78,10 +78,12 @@ plugin does with a malformed block.
 
 ## Cartridges
 
-RF-7 accepts a 4104-byte cartridge dump or a 163-byte single-voice dump. A
-cartridge's thirty-two voices become the plugin's thirty-two programs, named as
-the cartridge names them. Bytes outside the documented ranges are clamped and
-counted rather than silently accepted or used as a reason to refuse the file.
+RF-7 reads System Exclusive dumps, several of them in one file, a single voice
+on its own, and cartridge ROM images taken straight off the chip with no
+framing or checksum at all. Their voices become the plugin's programs — up to
+128, grouped into banks of thirty-two and named as the cartridge names them.
+Bytes outside the documented ranges are clamped and counted rather than
+silently accepted or used as a reason to refuse the file.
 See [Cartridges](docs/CARTRIDGES.md).
 
 ## Read next

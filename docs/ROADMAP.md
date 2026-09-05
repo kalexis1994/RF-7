@@ -1,5 +1,19 @@
 # Roadmap
 
+## 0.1.3 — done
+
+- Chip images are read: a cartridge ROM dumped from its own chip has no System
+  Exclusive framing and no checksum, and is now accepted on its shape alone.
+- Several bulk dumps in one file are read end to end, which is how collections
+  are distributed.
+- Up to 128 programs instead of exactly 32, grouped into banks of thirty-two.
+  A single voice dump is a library of one, and the factory library is eight
+  voices rather than eight padded out with INIT VOICE.
+- `--bank-order swapped` in the laboratory, because a cartridge ROM holds bank
+  B in the lower half of its address space and so opens on B1.
+- Program identifiers are three digits: `program-001`, not `program-01`. This
+  breaks saved program selections, which is why it happened at 0.1.x.
+
 ## 0.1.2 — done
 
 - Carriers are summed and divided by the operator count, so no single note can

@@ -2,13 +2,44 @@
 
 use rackforge_plugin_sdk::{MidiEvent, ParameterEvent, Processor};
 use rf7_plugin::{
-    MAX_FRAMES, PARAMETER_COUNT, PARAMETER_GAIN, RESOURCE_CARTRIDGE, Rf7Processor, TRANSFER_BYTES,
-    parameters,
+    MAX_FRAMES, MAX_RESOURCE_BYTES, PARAMETER_COUNT, PARAMETER_GAIN, RESOURCE_CARTRIDGE,
+    Rf7Processor, TRANSFER_BYTES, parameters,
 };
 use rf7_voice::{
-    BULK_DUMP_LENGTH, Cartridge, VOICES_PER_CARTRIDGE, Voice, encode_bulk_dump, encode_voice_dump,
-    factory_voice,
+    Cartridge, FACTORY_VOICES, MAX_VOICES, VOICES_PER_CARTRIDGE, Voice, encode_bulk_dump,
+    encode_packed, encode_voice_dump, factory_voice,
 };
+
+/// One bank as a cartridge chip holds it: packed voices, no framing at all.
+fn raw_bank(name: &[u8; 10]) -> Vec<u8> {
+    let mut voice = factory_voice(1);
+    voice.name = *name;
+    let mut bytes = Vec::new();
+    for _ in 0..VOICES_PER_CARTRIDGE {
+        bytes.extend_from_slice(&encode_packed(&voice));
+    }
+    bytes
+}
+
+fn deliver(processor: &mut Rf7Processor, bytes: &[u8]) -> bool {
+    if !processor.begin_resource(RESOURCE_CARTRIDGE, bytes.len() as u64) {
+        return false;
+    }
+    for (index, chunk) in bytes.chunks(512).enumerate() {
+        if !processor.write_resource((index * 512) as u64, chunk) {
+            return false;
+        }
+    }
+    processor.end_resource()
+}
+
+fn catalog(processor: &mut Rf7Processor) -> String {
+    let mut buffer = [0u8; TRANSFER_BYTES];
+    let length = processor
+        .write_program_catalog(&mut buffer)
+        .expect("a catalog must always be published");
+    String::from_utf8(buffer[..length].to_vec()).expect("ASCII only")
+}
 
 const FRAMES: u32 = 128;
 
@@ -224,7 +255,7 @@ fn state_round_trips_and_a_broken_state_changes_nothing() {
     processor.set_parameter(parameters::BEND_RANGE, 12.0);
     processor.set_parameter(parameters::BRIGHTNESS, 1.5);
     processor.set_parameter(parameters::OPERATOR_FIRST + 2, 0.0);
-    assert!(processor.load_preset("program-05"));
+    assert!(processor.load_preset("program-005"));
     let mut saved = [0u8; 512];
     let length = processor.save_state(&mut saved).expect("state must fit");
     assert_eq!(length, expected);
@@ -290,20 +321,42 @@ fn a_state_written_by_the_first_version_still_opens() {
     assert_eq!(processor.get_parameter(parameters::BRIGHTNESS), Some(1.0));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 
-    // The same header with a program that does not exist is still refused.
-    let mut broken = first;
-    broken[16..20].copy_from_slice(&99u32.to_le_bytes());
-    assert!(!processor.load_state(&broken));
+    // A program past anything RF-7 could ever offer is refused outright.
+    let mut impossible = first;
+    impossible[16..20].copy_from_slice(&(MAX_VOICES as u32).to_le_bytes());
+    assert!(!processor.load_state(&impossible));
+
+    // One that merely outruns the current library is clamped instead: the
+    // level and the controls in that state are worth keeping either way.
+    let mut beyond = first;
+    beyond[16..20].copy_from_slice(&40u32.to_le_bytes());
+    assert!(processor.load_state(&beyond));
+    assert_eq!(processor.get_parameter(PARAMETER_GAIN), Some(0.6));
+    assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
 
 #[test]
 fn only_this_plugins_program_identifiers_are_accepted() {
     let mut processor = prepared();
-    assert!(processor.load_preset("program-01"));
-    assert!(processor.load_preset("program-32"));
-    assert!(!processor.load_preset("program-33"));
-    assert!(!processor.load_preset("voice-01"));
+    assert_eq!(processor.program_count(), FACTORY_VOICES);
+    assert!(processor.load_preset("program-001"));
+    assert!(processor.load_preset("program-008"));
+    // Well-formed, but this library has no ninth voice.
+    assert!(!processor.load_preset("program-009"));
+    assert!(!processor.load_preset("program-128"));
+    assert!(!processor.load_preset("program-129"));
+    assert!(
+        !processor.load_preset("program-01"),
+        "the old two-digit form"
+    );
+    assert!(!processor.load_preset("voice-001"));
     assert!(!processor.load_preset(""));
+
+    // A cartridge makes the further slots real.
+    assert!(deliver(&mut processor, &raw_bank(b"LOADED    ")));
+    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
+    assert!(processor.load_preset("program-032"));
+    assert!(!processor.load_preset("program-033"));
 }
 
 #[test]
@@ -315,11 +368,12 @@ fn the_catalog_fits_the_declared_transfer_buffer() {
         .expect("a catalog must always be published");
     assert!(length <= TRANSFER_BYTES);
     let json = std::str::from_utf8(&buffer[..length]).expect("ASCII only");
-    assert_eq!(
-        json.matches("\"id\":\"program-").count(),
-        VOICES_PER_CARTRIDGE
-    );
+    assert_eq!(json.matches("\"id\":\"program-").count(), FACTORY_VOICES);
     assert!(json.contains("RF TINES"));
+    assert!(
+        !json.contains("program-009"),
+        "eight voices, not thirty-two"
+    );
 }
 
 #[test]
@@ -329,35 +383,67 @@ fn a_cartridge_arrives_in_pieces_and_becomes_the_programs() {
     let dump = encode_bulk_dump(&Cartridge::from_voices(voices), 0);
 
     let mut processor = prepared();
-    assert!(processor.begin_resource(RESOURCE_CARTRIDGE, dump.len() as u64));
-    for (index, chunk) in dump.chunks(512).enumerate() {
-        assert!(processor.write_resource((index * 512) as u64, chunk));
-    }
-    assert!(processor.end_resource());
-
-    let mut buffer = [0u8; TRANSFER_BYTES];
-    let length = processor.write_program_catalog(&mut buffer).unwrap();
-    let json = std::str::from_utf8(&buffer[..length]).unwrap();
+    assert!(deliver(&mut processor, &dump));
+    let json = catalog(&mut processor);
     assert!(json.contains("USER TONE"), "{json}");
     assert!(!json.contains("RF TINES"));
-    assert!(processor.load_preset("program-01"));
+    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
+    assert!(processor.load_preset("program-001"));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
 
 #[test]
-fn a_single_voice_dump_fills_the_whole_cartridge() {
+fn a_chip_image_with_no_framing_at_all_is_read() {
+    // A cartridge ROM dumped from its own chip: no System Exclusive header,
+    // no checksum, nothing but packed voices.
+    let mut processor = prepared();
+    assert!(deliver(&mut processor, &raw_bank(b"FROM A ROM")));
+    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
+    assert!(catalog(&mut processor).contains("FROM A ROM"));
+    assert!(processor.load_preset("program-020"));
+    assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
+}
+
+#[test]
+fn two_banks_become_sixty_four_programs() {
+    let mut bytes = raw_bank(b"BANK ONE  ");
+    bytes.extend_from_slice(&raw_bank(b"BANK TWO  "));
+    let mut processor = prepared();
+    assert!(deliver(&mut processor, &bytes));
+    assert_eq!(processor.program_count(), 64);
+    let json = catalog(&mut processor);
+    assert!(json.contains("BANK ONE"));
+    assert!(json.contains("BANK TWO"));
+    assert!(json.contains("\"id\":\"program-064\""));
+    assert!(processor.load_preset("program-064"));
+    assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
+}
+
+#[test]
+fn a_library_larger_than_rf7_offers_is_capped_rather_than_refused() {
+    let mut bytes = Vec::new();
+    for _ in 0..6 {
+        bytes.extend_from_slice(&raw_bank(b"MANY      "));
+    }
+    let mut processor = prepared();
+    assert!(deliver(&mut processor, &bytes));
+    assert_eq!(processor.program_count(), MAX_VOICES);
+    assert!(processor.load_preset("program-128"));
+}
+
+#[test]
+fn a_single_voice_dump_is_a_library_of_one() {
     let mut voice = Voice::init();
     voice.name = *b"ONE VOICE ";
     voice.operators[0].output_level = 99;
-    let dump = encode_voice_dump(&voice, 0);
     let mut processor = prepared();
-    assert!(processor.begin_resource(RESOURCE_CARTRIDGE, dump.len() as u64));
-    assert!(processor.write_resource(0, &dump));
-    assert!(processor.end_resource());
-    let mut buffer = [0u8; TRANSFER_BYTES];
-    let length = processor.write_program_catalog(&mut buffer).unwrap();
-    let json = std::str::from_utf8(&buffer[..length]).unwrap();
-    assert_eq!(json.matches("ONE VOICE").count(), VOICES_PER_CARTRIDGE);
+    assert!(deliver(&mut processor, &encode_voice_dump(&voice, 0)));
+    assert_eq!(processor.program_count(), 1);
+    let json = catalog(&mut processor);
+    assert_eq!(json.matches("ONE VOICE").count(), 1);
+    assert!(!json.contains("program-002"), "one voice is one program");
+    assert!(processor.load_preset("program-001"));
+    assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
 
 #[test]
@@ -373,8 +459,8 @@ fn a_cartridge_that_does_not_arrive_cleanly_is_refused() {
         "not our resource"
     );
     assert!(
-        !processor.begin_resource(RESOURCE_CARTRIDGE, BULK_DUMP_LENGTH as u64 + 1),
-        "larger than any cartridge"
+        !processor.begin_resource(RESOURCE_CARTRIDGE, MAX_RESOURCE_BYTES as u64 + 1),
+        "larger than RF-7 will buffer"
     );
     assert!(!processor.write_resource(0, &dump), "no delivery was begun");
 
@@ -397,14 +483,12 @@ fn a_cartridge_that_does_not_arrive_cleanly_is_refused() {
     assert!(processor.write_resource(0, &edited));
     assert!(!processor.end_resource());
 
+    // A length that is not any shape RF-7 recognises.
+    assert!(!deliver(&mut processor, &vec![0u8; 5000]));
+
     // Through all of that the factory programs are still the ones offered.
-    let mut buffer = [0u8; TRANSFER_BYTES];
-    let length = processor.write_program_catalog(&mut buffer).unwrap();
-    assert!(
-        std::str::from_utf8(&buffer[..length])
-            .unwrap()
-            .contains("RF TINES")
-    );
+    assert!(catalog(&mut processor).contains("RF TINES"));
+    assert_eq!(processor.program_count(), FACTORY_VOICES);
 }
 
 #[test]
