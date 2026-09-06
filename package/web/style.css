@@ -38,6 +38,12 @@
   --red: #e5433a;
   --lcd-ink: #74f5a6;
   --lcd-glass: #04150b;
+
+  /* The panel's two hardware dimensions. A narrow chassis shrinks the knob
+     and the keys rather than dropping a control: every part of the
+     instrument stays on the panel, whatever frame the host gives it. */
+  --knob-size: 62px;
+  --key-min: 74px;
 }
 
 * { box-sizing: border-box; }
@@ -45,6 +51,12 @@
 html, body {
   height: 100%;
   margin: 0;
+}
+
+/* On a phone the browser's own bars come and go. The chassis fills the
+   viewport that is there, not the one the page loaded with. */
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
 }
 
 /* The instrument fills the window it is given, the way a panel fills a rack.
@@ -101,6 +113,7 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .panel {
+  container: panel / inline-size;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -112,7 +125,8 @@ h1, h2, h3, p { margin: 0; }
 
 .rail {
   display: grid;
-  grid-template-columns: auto minmax(240px, 1fr) auto;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  grid-template-areas: "identity display commands";
   align-items: center;
   gap: clamp(10px, 1.6vw, 26px);
   padding: 12px clamp(12px, 1.6vw, 22px);
@@ -126,6 +140,7 @@ h1, h2, h3, p { margin: 0; }
 .identity {
   display: grid;
   gap: 3px;
+  grid-area: identity;
   padding-right: clamp(10px, 1.4vw, 20px);
   border-right: 1px solid var(--hair);
 }
@@ -149,6 +164,7 @@ h1, h2, h3, p { margin: 0; }
 
 /* The lit display. */
 .lcd {
+  grid-area: display;
   min-width: 0;
   padding: 7px 14px 8px;
   display: grid;
@@ -208,16 +224,23 @@ h1, h2, h3, p { margin: 0; }
 
 .lcd[data-ready="false"] .line { color: var(--amber); }
 
+/* The command keys keep their order and their place. Given a rail too
+   narrow to hold them in a line they wrap onto a second one; a key is never
+   pushed off the panel, because a player cannot press what is not there. */
 .commands {
+  grid-area: commands;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   align-items: center;
 }
 
 /* Membrane keys. */
 .key {
-  min-width: 74px;
-  height: 40px;
+  flex: 0 0 auto;
+  min-width: var(--key-min);
+  min-height: 40px;
   padding: 0 12px;
   display: inline-grid;
   grid-auto-flow: column;
@@ -293,7 +316,9 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .name-input {
+  flex: 1 1 clamp(150px, 16vw, 250px);
   width: clamp(150px, 16vw, 250px);
+  max-width: 100%;
   height: 40px;
   padding: 0 11px;
   border: 1px solid #08090b;
@@ -310,13 +335,22 @@ h1, h2, h3, p { margin: 0; }
 
 /* ---- section tabs ---------------------------------------------------- */
 
+/* Four keys across the panel. Below the width four legends need they keep
+   their size and the row scrolls, rather than the last key being cut off
+   the chassis where nothing can reach it. */
 .tabs {
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
   border-bottom: 1px solid #05060a;
   background: linear-gradient(180deg, #101116, #0b0c10);
 }
+
+.tabs::-webkit-scrollbar { height: 0; }
 
 .tab {
   position: relative;
@@ -326,6 +360,7 @@ h1, h2, h3, p { margin: 0; }
   border: 0;
   border-right: 1px solid rgba(0, 0, 0, 0.65);
   background: transparent;
+  scroll-snap-align: start;
   text-align: left;
   cursor: pointer;
   transition: background 110ms ease, color 110ms ease;
@@ -406,11 +441,15 @@ h1, h2, h3, p { margin: 0; }
 .page-voice .group-peg { grid-area: peg; }
 .page-voice .group-more { grid-column: 1 / -1; }
 
-.page-operators { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.page-perform { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+/* A column asks for the width its contents want, but never more than the
+   page has: below that, one column, not a page that hangs off the panel. */
+.page-operators { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
+.page-perform { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
 .page-programs { grid-template-columns: minmax(0, 1fr); }
 
-@media (max-width: 940px) {
+/* The pages answer to the panel, not to the window: the host frames the
+   panel, and the frame is what a control has to fit inside. */
+@container panel (max-width: 940px) {
   .page-voice {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "algorithm" "global" "lfo" "peg";
@@ -421,6 +460,7 @@ h1, h2, h3, p { margin: 0; }
 
 .group {
   position: relative;
+  container: group / inline-size;
   min-width: 0;
   padding: 11px 13px 13px 16px;
   border: 1px solid #0a0b0e;
@@ -460,7 +500,7 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .group-algorithm .controls { flex-wrap: wrap; align-items: stretch; gap: 16px 20px; }
-.group-algorithm .chart { flex: 0 0 clamp(210px, 24vw, 330px); }
+.group-algorithm .chart { flex: 1 1 clamp(200px, 40cqi, 330px); min-width: min(200px, 100%); max-width: 330px; }
 .group-algorithm .alg-fields { flex: 1 1 190px; max-width: 330px; }
 .group-peg .controls { align-items: center; gap: 8px 12px; }
 
@@ -487,7 +527,9 @@ h1, h2, h3, p { margin: 0; }
 
 .ctl-row .seg-ctl { min-width: 0; }
 
-@media (max-width: 560px) {
+/* A controller row is as wide as its group, which on a wide panel is a
+   third of the page. The group is what decides, not the window. */
+@container group (max-width: 430px) {
   .ctl-row { grid-template-columns: 82px auto; }
   .ctl-row .seg-ctl { grid-column: 1 / 3; }
 }
@@ -512,7 +554,7 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .ctl output {
-  min-width: 40px;
+  min-width: min(40px, 100%);
   padding: 1px 4px;
   border-radius: 2px;
   background: rgba(0, 0, 0, 0.28);
@@ -523,11 +565,13 @@ h1, h2, h3, p { margin: 0; }
   text-align: center;
 }
 
-/* Knob: printed scale, metal cap, pointer marker. */
+/* Knob: printed scale, metal cap, pointer marker. Cap, shadow and marker
+   are struck as fractions of the knob, so a smaller panel prints a smaller
+   knob and not a broken one. */
 .knob {
   --knob-turn: -135deg;
-  width: 62px;
-  height: 62px;
+  width: var(--knob-size);
+  height: var(--knob-size);
   position: relative;
   display: grid;
   place-items: center;
@@ -552,20 +596,20 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .knob .shadow {
-  width: 38px;
-  height: 11px;
+  width: 61.3%;
+  height: 17.7%;
   position: absolute;
-  top: 41px;
+  top: 66.1%;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.62);
   filter: blur(3px);
 }
 
 .knob .cap {
-  width: 40px;
-  height: 40px;
+  width: 64.5%;
+  height: 64.5%;
   position: absolute;
-  top: 11px;
+  top: 17.7%;
   border: 1px solid #030405;
   border-radius: 50%;
   overflow: hidden;
@@ -581,7 +625,7 @@ h1, h2, h3, p { margin: 0; }
 
 .knob .top {
   position: absolute;
-  inset: 3px;
+  inset: 7.5%;
   border: 1px solid #5d5e61;
   border-radius: 50%;
   background:
@@ -595,7 +639,7 @@ h1, h2, h3, p { margin: 0; }
 .knob .top::after {
   content: "";
   position: absolute;
-  inset: 3px;
+  inset: 8.8%;
   border: 1px solid #161619;
   border-radius: 50%;
   background:
@@ -614,9 +658,9 @@ h1, h2, h3, p { margin: 0; }
 .knob .marker::before {
   content: "";
   width: 3px;
-  height: 14px;
+  height: 35%;
   position: absolute;
-  top: 13px;
+  top: 32.5%;
   left: 50%;
   border-radius: 1px;
   background: #f4f1e7;
@@ -644,8 +688,8 @@ h1, h2, h3, p { margin: 0; }
 
 /* Membrane switch. */
 .sw {
-  min-width: 96px;
-  height: 34px;
+  min-width: min(96px, 100%);
+  min-height: 34px;
   margin-top: 12px;
   padding: 0 11px;
   display: inline-grid;
@@ -674,7 +718,7 @@ h1, h2, h3, p { margin: 0; }
 
 /* Segmented keys. */
 /* A key needs room for its legend: six waveforms or four curves. */
-.seg-ctl { justify-items: stretch; min-width: 232px; }
+.seg-ctl { justify-items: stretch; min-width: min(232px, 100%); }
 
 .seg {
   display: flex;
@@ -713,7 +757,7 @@ h1, h2, h3, p { margin: 0; }
 }
 
 /* Panel selector, for a list too long for keys. */
-.select-ctl { justify-items: stretch; min-width: 180px; }
+.select-ctl { justify-items: stretch; min-width: min(180px, 100%); }
 
 .select-ctl select {
   width: 100%;
@@ -852,6 +896,7 @@ h1, h2, h3, p { margin: 0; }
 /* ---- operator cards -------------------------------------------------- */
 
 .op {
+  container: op / inline-size;
   min-width: 0;
   padding: 10px 11px 12px;
   border: 1px solid #0a0b0e;
@@ -867,10 +912,20 @@ h1, h2, h3, p { margin: 0; }
 
 .op header {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 6px;
   margin-bottom: 8px;
+}
+
+/* What the header does rather than says: the operator's own switch, COPY
+   and PASTE. On a card too narrow to read them beside the legends they take
+   the line under them, still in the header, still in the same order. */
+.op header .acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 /* The points on an envelope's screen: the end of each segment, dragged up
@@ -892,6 +947,7 @@ h1, h2, h3, p { margin: 0; }
    operator to paste. */
 .key.mini {
   min-width: 0;
+  min-height: 24px;
   height: 24px;
   padding: 0 8px;
   gap: 5px;
@@ -904,6 +960,7 @@ h1, h2, h3, p { margin: 0; }
 /* The operator's own switch, small enough for a header. */
 .sw.mini {
   min-width: 0;
+  min-height: 24px;
   height: 24px;
   margin: 0;
   padding: 0 8px 0 22px;
@@ -978,7 +1035,7 @@ h1, h2, h3, p { margin: 0; }
 .pads {
   width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(158px, 100%), 1fr));
   gap: 5px;
 }
 
@@ -1042,7 +1099,7 @@ h1, h2, h3, p { margin: 0; }
   color: var(--muted);
 }
 
-.page-config { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.page-config { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); }
 .page-config .group { align-content: start; }
 .page-config .controls { display: grid; gap: 10px; }
 
@@ -1060,7 +1117,7 @@ h1, h2, h3, p { margin: 0; }
 
 .facts {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
   gap: 4px 14px;
   margin: 0;
   padding: 8px 10px;
@@ -1080,13 +1137,15 @@ h1, h2, h3, p { margin: 0; }
 
 .facts dd {
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: ui-monospace, Consolas, monospace;
   font-size: 11.5px;
   color: var(--lcd-ink);
 }
 
 .page-config .row { display: flex; flex-wrap: wrap; gap: 8px; }
-.page-config .pads { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.page-config .pads { grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); }
 .page-config .pad .n { color: var(--amber); }
 
 .note.busy {
@@ -1128,6 +1187,109 @@ h1, h2, h3, p { margin: 0; }
 .plate p { color: #c3bdb1; font-size: 13px; line-height: 1.5; }
 .plate strong { color: var(--ivory); }
 .plate .small { color: var(--muted); font-size: 11.5px; }
+
+/* ---- a narrow chassis -------------------------------------------------
+   The same instrument at every width: the same keys, the same knobs, the
+   same order, the same legends. What a narrow frame changes is how many of
+   them sit on a line, and how large a knob is printed — never which
+   controls the panel has. Every measure below is the panel's own width, or
+   the width of the group or card the control is mounted in. */
+
+/* The head rail: the commands take the line under the display rather than
+   running off the end of the chassis. */
+@container panel (max-width: 760px) {
+  .rail {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "identity display"
+      "commands commands";
+    row-gap: 10px;
+  }
+
+  .commands { justify-content: flex-start; }
+
+  /* The setup rail carries a word, not five keys; it has no second line to
+     take and does not need one. */
+  body[data-surface="config"] .rail {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "identity display commands";
+    row-gap: 0;
+  }
+}
+
+/* A section key is its name; the gloss under it is the first thing a
+   narrow panel can do without. */
+@container panel (max-width: 560px) {
+  .tab { padding: 8px 9px 9px; }
+  .tab strong { font-size: 10px; letter-spacing: 0.12em; }
+  .tab span { display: none; }
+}
+
+@container panel (max-width: 460px) {
+  .key { --key-min: 56px; padding: 0 7px; gap: 5px; font-size: 9.5px; letter-spacing: 0.06em; }
+  .commands { gap: 6px; }
+  .tab { padding: 8px 6px 9px; }
+  .lcd { padding: 6px 10px 7px; gap: 1px 10px; }
+  .lcd .code { padding-right: 9px; }
+  .identity { padding-right: 10px; }
+}
+
+/* The knob follows the card or the group it is mounted on. */
+@container op (max-width: 300px) {
+  .op .ctl { --knob-size: 54px; }
+
+  /* The header's actions take the line under the legends. */
+  .op header { grid-template-columns: auto auto minmax(0, 1fr) auto; }
+  .op header .acts { grid-column: 1 / -1; justify-self: start; }
+}
+
+@container op (max-width: 260px) {
+  .op .ctl { --knob-size: 48px; }
+}
+
+/* Narrower than four knobs can be printed at all, the envelope's rates and
+   levels read as two rows of two rather than four squeezed columns. A card
+   this narrow is a panel below the width the instrument is drawn for; at
+   every width it is drawn for, the four stay in a line. */
+@container op (max-width: 200px) {
+  .op .row.four,
+  .op .row.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container group (max-width: 300px) {
+  .group .ctl { --knob-size: 54px; }
+}
+
+/* The window's own edges. On a phone the rack furniture gives its width
+   back to the panel. */
+@media (max-width: 420px) {
+  body { padding: 4px; }
+  .chassis { grid-template-columns: 6px minmax(0, 1fr) 6px; }
+}
+
+/* ---- a panel under a finger -------------------------------------------
+   A fingertip is not a pointer: it has no hover, and it covers what it
+   presses. Where the host is driven by touch the keys are struck at the
+   size a finger can hit, and the points on an envelope are drawn large
+   enough to take hold of. */
+@media (pointer: coarse) {
+  .key { min-height: 44px; }
+  .key.mini,
+  .sw.mini { min-height: 32px; height: 32px; }
+  .sw { min-height: 40px; }
+  /* Only the height a finger needs: how much room a legend gets sideways
+     is the panel's business, and it has already decided. */
+  .tab { padding-top: 12px; padding-bottom: 13px; }
+  .stepper button { width: 38px; height: 38px; }
+  .seg button { padding: 11px 4px; }
+  .pad { padding: 11px 10px; }
+  .select-ctl select { height: 38px; }
+  .name-input { height: 44px; }
+  .env { height: 72px; }
+
+  .env .pt,
+  .env .pt:hover { r: 6; stroke-width: 2; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }

@@ -786,7 +786,7 @@ fn operator(state: &State, draft: &Draft, n: usize, carrier: bool) -> String {
         if can_paste { "" } else { " disabled" }
     );
     let mut out = format!(
-        "<section class=\"{class}\" data-op=\"{n}\"><header><span class=\"badge\">OP{n}</span><span class=\"role\">{role}</span><span class=\"freq\">{}</span><span class=\"out\">{}</span>{switch}{keys}</header><div class=\"screen\">{}</div>",
+        "<section class=\"{class}\" data-op=\"{n}\"><header><span class=\"badge\">OP{n}</span><span class=\"role\">{role}</span><span class=\"freq\">{}</span><span class=\"out\">{}</span><span class=\"acts\">{switch}{keys}</span></header><div class=\"screen\">{}</div>",
         esc(&frequency),
         integer(state, &f("out")),
         envelope_svg(rates, levels, false, Some(&f("eg")))

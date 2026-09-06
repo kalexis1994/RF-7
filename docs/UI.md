@@ -113,6 +113,33 @@ The panel has one appearance. It does not repaint itself for the room, any
 more than a painted chassis would; the host's lighting hint is read and left
 alone.
 
+## On a narrow panel
+
+The panel is the same instrument at every width. A phone gets the same four
+sections, the same keys and the same knobs a Desktop window gets; what a
+narrow frame changes is how many of them sit on a line and how large a knob
+is printed, never which controls the panel has.
+
+- The head rail keeps its keys. Below the width they need in a line the
+  commands take the line under the display rather than running off the end
+  of the chassis, because a player cannot press what is not there.
+- The section keys keep their names and drop the gloss under them; if four
+  names still do not fit, the row scrolls rather than losing the fourth.
+- The knob is one dimension the panel prints at 62, 54 or 48 pixels, and the
+  cap, its shadow and the pointer are struck as fractions of it.
+- An operator's header keeps its number, its role, its frequency and its
+  level on one line, and takes the line under them for ON, COPY and PASTE.
+- Every measure is the width of the panel, of the group, or of the card the
+  control is mounted on — never the window's. A group that is a third of a
+  wide page is a narrow group and lays itself out as one.
+- Where the host is driven by touch, the keys are struck at the size a
+  finger can hit and the points on an envelope are drawn large enough to
+  take hold of.
+
+The floor is a panel 320 pixels wide. At that width every control is still
+on the panel, still legible and still reachable; narrower than that the
+working surface scrolls, and the rail and the section keys do not.
+
 ## The setup surface
 
 RF-7 declares a second surface, CONFIG, which RackForge opens from its
