@@ -8,14 +8,16 @@ detune, fixed-frequency operators, feedback, a pitch envelope and one global LFO
 with six waveforms. Sixteen voices. It reads the DX7 cartridges you already own
 and compiles to a portable RackForge WASM plugin.
 
-**This is an uncalibrated engine, not a measured DX7 recreation.** The structure
-is taken from documented behaviour and asserted in tests. Several of the curves
-that turn a panel number into a frequency or a slope are RF-7's own
-approximations, and [the model ledger](docs/MODEL.md) says which is which,
-one line per mapping. The modulation index — the one constant that sets how
-bright the whole instrument is — is derived from the chip's datapath and the
-firmware and matches the literature; a recording would confirm the last per
-cent.
+**What is modelled is written down, and where it came from.** The structure
+is taken from documented behaviour and asserted in tests; the tables that
+turn a panel number into a level, a rate, a pitch or a speed are read from
+the instrument's own firmware — its envelope, keyboard scaling, pitch
+envelope and LFO arithmetic, its rate and level tables — or from published
+measurements of the hardware, and the factory voices are measured against
+the cartridges and against a recorded grand. [The model ledger](docs/MODEL.md)
+says which is which, one line per mapping, and names the two numbers that
+only a recording of a DX7 would settle: the timer's tick, and how deep one
+step of amplitude modulation sensitivity goes.
 
 **No voice data ships here.** The thirty-eight factory voices were written for RF-7.
 The voices a DX7 shipped with are Yamaha's; RF-7 plays a cartridge you supply.
@@ -139,6 +141,14 @@ framing or checksum at all. Their voices become the plugin's programs — up to
 Bytes outside the documented ranges are clamped and counted rather than
 silently accepted or used as a reason to refuse the file.
 See [Cartridges](docs/CARTRIDGES.md).
+
+## Licence
+
+RF-7 is distributed under the GNU General Public License, version 3 only
+(`GPL-3.0-only`); see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). The
+package RackForge bundles carries both. RF-7 and RackForge are separate
+components: the plugin talks to the host through its public WebAssembly ABI
+and contains no host code.
 
 ## Read next
 
