@@ -55,8 +55,13 @@ surface below.
 **The head rail** carries the RF-7 logotype, the lit display and the command
 keys. The display shows the program number, its name, what the panel is doing
 to it — PLAYING, EDITING, EDITING · UNSAVED — and one line of machine state.
-The keys are EDIT and NEW while a program plays; SAVE (its lamp lit while
-there are unsaved changes) and EXIT, with the name field, while one is open.
+The number is the program's own — the library slot, or U and its number for
+a saved program — and an open program keeps the number it came from. The
+keys are EDIT and NEW while a program plays; SAVE (its lamp lit while there
+are unsaved changes), COMPARE and EXIT, with the name field, while one is
+open. COMPARE plays the program as it opened for as long as it is down,
+shows those values on the knobs, and takes no edits until it is released;
+it does nothing until something has moved.
 
 **VOICE** — the algorithm on lit glass, drawn from the routing table, with a
 stepper, a selector for all thirty-two and the carrier list printed beneath;
@@ -83,13 +88,42 @@ plays a program. While a program is open for editing the pads are dark: the
 host holds the audition for the draft.
 
 Knobs turn by dragging up and down — a hundred and eighty pixels is the whole
-range, the throw the other RackForge instruments use — and answer the arrow,
-page and home keys when focused. A choice is a row of membrane keys, except
+range, the throw the other RackForge instruments use. Shift makes the same
+travel a tenth of the range, and switching Shift mid-drag continues from where
+the knob is rather than jumping. The wheel turns a knob a notch, a step with
+Shift. A double-click sends a knob back to where it started: a parameter to
+the schema's default, a voice field to the value it had when the program was
+opened. Focused, a knob answers the arrow, page and home keys. Each operator
+card carries its own ON key, the same switch the PERFORM page and a controller
+see, so an operator can be muted without leaving the editor. A choice is a row of membrane keys, except
 the algorithm, which has thirty-two positions and so keeps a selector.
 
 The panel has one appearance. It does not repaint itself for the room, any
 more than a painted chassis would; the host's lighting hint is read and left
 alone.
+
+## The setup surface
+
+RF-7 declares a second surface, CONFIG, which RackForge opens from its
+Plugins section. It holds what is done once rather than while playing:
+
+- **Voice cartridge** — whether the instrument is playing its factory bank or
+  a cartridge of yours, how many programs that gives it, and the two commands
+  that change it. *Install…* opens the host's own explorer, and the file it
+  returns is installed at once; *Remove* puts the factory bank back.
+- **Already chosen** — the files RackForge has been granted before, each one
+  a press away from being installed again without the explorer.
+- **Instrument** — the plugin version, how many programs you have saved, and
+  whether the host is answering.
+
+The surface never sees a path, and it cannot invent one: it asks for the
+resource by the name the manifest declares, and the host decides what that
+means. While the host is working the commands are disabled and the panel says
+what it is waiting for; a cancelled explorer is reported as a choice not
+made, not as a failure. The requests that wait on a person — the explorer, an
+installation — are exempt from the five-second timeout the other requests
+keep, because a player thinking about which file to pick is not a host that
+has stopped answering.
 
 ## What it refuses to do
 

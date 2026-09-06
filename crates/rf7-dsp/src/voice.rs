@@ -52,6 +52,47 @@ pub const MODULATION_CYCLES: f32 = 2.088_726_6;
 /// Read once, here, so changing any of them never disturbs a note that is
 /// already sounding — which is what a transpose switch or an envelope-time
 /// dial should do, and what automating one of them must not undo.
+/// The key that starts a note.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Key {
+    pub channel: u8,
+    pub note: u8,
+    pub velocity: u8,
+}
+
+/// Where a note starts from, and how fast it arrives.
+///
+/// `None` for the note itself means no glide: the voice sounds at its own
+/// pitch from the first sample.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Glide {
+    pub from: Option<u8>,
+    /// Semitones a second; zero is an instant arrival.
+    pub semitones_per_second: f32,
+}
+
+impl Glide {
+    /// The offset a voice starts at, in semitones from the note it plays.
+    fn offset_for(self, note: u8) -> f32 {
+        match self.from.filter(|_| self.gliding()) {
+            Some(from) => f32::from(from) - f32::from(note),
+            None => 0.0,
+        }
+    }
+
+    fn gliding(self) -> bool {
+        self.semitones_per_second > 0.0 && self.semitones_per_second.is_finite()
+    }
+
+    fn per_sample(self, sample_rate: f32) -> f32 {
+        if self.gliding() {
+            self.semitones_per_second / sample_rate
+        } else {
+            0.0
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VoiceSetup {
     /// Semitones on top of the voice's own transpose byte.
@@ -79,6 +120,9 @@ pub struct Performance {
     pub pitch: f32,
     /// How much of the amplitude modulation is in, 0.0..=1.0.
     pub amplitude: f32,
+    /// Envelope bias the controllers are still withholding, 0.0..=1.0 of the
+    /// same sensitivity the amplitude modulation reaches through.
+    pub bias: f32,
     /// Cycles of phase deviation per unit of modulator output: this is
     /// [`MODULATION_CYCLES`] scaled by the engine's brightness control.
     pub modulation: f32,
@@ -92,6 +136,7 @@ impl Default for Performance {
         Self {
             pitch: 0.0,
             amplitude: 0.0,
+            bias: 0.0,
             modulation: MODULATION_CYCLES,
             operators: (1 << OPERATORS) - 1,
         }
@@ -122,6 +167,11 @@ pub struct NoteVoice {
     pitch_envelope: Envelope,
     channel: u8,
     note: u8,
+    /// Semitones this voice is still away from its note, and how fast it
+    /// closes that distance. A glide is a straight line in the logarithmic
+    /// pitch domain, which is where the instrument draws it too.
+    glide: f32,
+    glide_per_sample: f32,
     /// Rising while the key or the pedal holds it.
     held: bool,
     active: bool,
@@ -145,6 +195,8 @@ impl Default for NoteVoice {
             pitch_envelope: Envelope::default(),
             channel: 0,
             note: 0,
+            glide: 0.0,
+            glide_per_sample: 0.0,
             held: false,
             active: false,
             age: 0,
@@ -156,12 +208,16 @@ impl NoteVoice {
     pub fn start(
         &mut self,
         patch: &Voice,
-        channel: u8,
-        note: u8,
-        velocity: u8,
+        key: Key,
         setup: &VoiceSetup,
         sample_rate: f32,
+        glide: Glide,
     ) {
+        let Key {
+            channel,
+            note,
+            velocity,
+        } = key;
         let transposed = i32::from(note) + i32::from(patch.transpose.min(48)) - TRANSPOSE_CENTRE
             + setup.transpose;
         let hertz = REFERENCE_HERTZ * (((f64::from(transposed) - REFERENCE_NOTE) / 12.0).exp2());
@@ -208,9 +264,53 @@ impl NoteVoice {
         );
         self.channel = channel;
         self.note = note;
+        self.glide = glide.offset_for(note);
+        self.glide_per_sample = glide.per_sample(sample_rate);
         self.held = true;
         self.active = true;
         self.age = 0;
+    }
+
+    /// Send a sounding voice to another note without starting it again.
+    ///
+    /// This is what a legato note does on the instrument: the envelopes carry
+    /// on from where they are, and only the pitch moves. The operator levels
+    /// keep the scaling of the key that started the phrase, which is what the
+    /// hardware does — it scales when a note begins, not while it is held.
+    pub fn retune(
+        &mut self,
+        patch: &Voice,
+        note: u8,
+        setup: &VoiceSetup,
+        sample_rate: f32,
+        glide: Glide,
+    ) {
+        if !self.active {
+            return;
+        }
+        let transposed = i32::from(note) + i32::from(patch.transpose.min(48)) - TRANSPOSE_CENTRE
+            + setup.transpose;
+        let hertz = REFERENCE_HERTZ * (((f64::from(transposed) - REFERENCE_NOTE) / 12.0).exp2());
+        for (index, operator) in patch.operators.iter().enumerate() {
+            if operator.fixed_frequency {
+                continue;
+            }
+            self.increments[index] =
+                ((hertz * operator_ratio(operator)) / f64::from(sample_rate)) as f32;
+        }
+        // Wherever the old note was sounding is where the new one starts, so
+        // the pitch does not step as the target changes under it.
+        self.glide = f32::from(self.note) + self.glide - f32::from(note);
+        self.glide_per_sample = glide.per_sample(sample_rate);
+        if !glide.gliding() {
+            self.glide = 0.0;
+        }
+        self.note = note;
+    }
+
+    /// The pitch this voice is sounding at, in semitones from its own note.
+    pub fn glide_offset(&self) -> f32 {
+        self.glide
     }
 
     pub fn channel(&self) -> u8 {
@@ -255,13 +355,24 @@ impl NoteVoice {
             return 0.0;
         }
         self.age += 1;
-        let semitones = performance.pitch + self.pitch_envelope.advance();
+        if self.glide != 0.0 {
+            // The firmware speeds a glide up by one step for every whole
+            // octave still to cross, and clamps on arrival rather than
+            // easing into it.
+            let step = self.glide_per_sample * crate::tables::portamento_octave_boost(self.glide);
+            if step >= self.glide.abs() {
+                self.glide = 0.0;
+            } else {
+                self.glide -= step.copysign(self.glide);
+            }
+        }
+        let semitones = performance.pitch + self.glide + self.pitch_envelope.advance();
         let factor = (semitones / 12.0).exp2();
         let mut sum = 0.0;
         let mut audible = false;
         for index in (0..OPERATORS).rev() {
-            let units =
-                self.envelopes[index].advance() - self.amp_mod[index] * performance.amplitude;
+            let units = self.envelopes[index].advance()
+                - self.amp_mod[index] * (performance.amplitude + performance.bias);
             // A muted operator is silent but is still counted as sounding
             // below, so muting one never shortens or extends the note.
             let gain = if performance.operators & (1 << index) == 0 {
@@ -333,7 +444,17 @@ mod tests {
     ) -> Vec<f32> {
         let sine = Sine::new();
         let mut voice = NoteVoice::default();
-        voice.start(patch, 0, note, velocity, &VoiceSetup::default(), 48_000.0);
+        voice.start(
+            patch,
+            Key {
+                channel: 0,
+                note,
+                velocity,
+            },
+            &VoiceSetup::default(),
+            48_000.0,
+            Glide::default(),
+        );
         (0..samples)
             .map(|_| voice.next_sample(&sine, performance))
             .collect()
@@ -361,7 +482,17 @@ mod tests {
         let patch = factory_voice(4); // RF MARIMBA, no sustain segment
         let sine = Sine::new();
         let mut voice = NoteVoice::default();
-        voice.start(&patch, 0, 60, 100, &VoiceSetup::default(), 48_000.0);
+        voice.start(
+            &patch,
+            Key {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+            &VoiceSetup::default(),
+            48_000.0,
+            Glide::default(),
+        );
         voice.release();
         let performance = Performance::default();
         for _ in 0..48_000 * 4 {
@@ -428,11 +559,14 @@ mod tests {
         let mut voice = NoteVoice::default();
         voice.start(
             &factory_voice(0),
-            3,
-            72,
-            100,
+            Key {
+                channel: 3,
+                note: 72,
+                velocity: 100,
+            },
             &VoiceSetup::default(),
             48_000.0,
+            Glide::default(),
         );
         let performance = Performance::default();
         for _ in 0..1_000 {
@@ -515,11 +649,14 @@ mod tests {
         let mut voice = NoteVoice::default();
         voice.start(
             &factory_voice(4),
-            0,
-            60,
-            100,
+            Key {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
             &VoiceSetup::default(),
             48_000.0,
+            Glide::default(),
         );
         voice.release();
         for _ in 0..48_000 * 4 {
@@ -533,13 +670,33 @@ mod tests {
         let sine = Sine::new();
         let patch = factory_voice(6);
         let mut plain = NoteVoice::default();
-        plain.start(&patch, 0, 60, 100, &VoiceSetup::default(), 48_000.0);
+        plain.start(
+            &patch,
+            Key {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+            &VoiceSetup::default(),
+            48_000.0,
+            Glide::default(),
+        );
         let mut octave = NoteVoice::default();
         let setup = VoiceSetup {
             transpose: 12,
             ..VoiceSetup::default()
         };
-        octave.start(&patch, 0, 60, 100, &setup, 48_000.0);
+        octave.start(
+            &patch,
+            Key {
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+            &setup,
+            48_000.0,
+            Glide::default(),
+        );
         let performance = Performance::default();
         let low: Vec<f32> = (0..48_000)
             .map(|_| plain.next_sample(&sine, &performance))
@@ -564,7 +721,17 @@ mod tests {
                 velocity_depth: depth,
                 ..VoiceSetup::default()
             };
-            voice.start(&patch, 0, 60, 20, &setup, 48_000.0);
+            voice.start(
+                &patch,
+                Key {
+                    channel: 0,
+                    note: 60,
+                    velocity: 20,
+                },
+                &setup,
+                48_000.0,
+                Glide::default(),
+            );
             let performance = Performance::default();
             let rendered: Vec<f32> = (0..12_000)
                 .map(|_| voice.next_sample(&sine, &performance))

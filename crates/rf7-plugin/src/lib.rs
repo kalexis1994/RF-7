@@ -126,7 +126,7 @@ impl Rf7Processor {
             0x80 => engine.note_off(channel, index),
             0xb0 => engine.control_change(channel, index, f64::from(value) / 127.0),
             0xc0 => {
-                self.select_library_program(usize::from(index));
+                self.program_change(usize::from(index));
             }
             0xd0 => engine.channel_pressure(channel, f64::from(index) / 127.0),
             0xe0 => {
@@ -162,7 +162,7 @@ impl Rf7Processor {
                 engine.control_change(event.channel, event.index, value);
             }
             MIDI2_KIND_PROGRAM_CHANGE => {
-                self.select_library_program(usize::from(event.index));
+                self.program_change(usize::from(event.index));
             }
             MIDI2_KIND_PITCH_BEND => {
                 let centred = f64::from(event.value) - f64::from(u32::MAX) / 2.0;
@@ -180,7 +180,22 @@ impl Rf7Processor {
         }
     }
 
-    /// A program change, from MIDI or the catalog: a library slot.
+    /// A MIDI program change. The numbers up to the library's length are its
+    /// slots; the numbers past it reach the saved programs in catalog order,
+    /// so a controller can call up a program written in the editor as well as
+    /// one from the cartridge. A number nothing answers to changes nothing.
+    fn program_change(&mut self, number: usize) -> bool {
+        if number < self.library.len() {
+            return self.select_library_program(number);
+        }
+        let Some(program) = self.custom.entries().get(number - self.library.len()) else {
+            return false;
+        };
+        let id = program.id.clone();
+        self.select_custom_program(&id)
+    }
+
+    /// A program change from the catalog: a library slot.
     fn select_library_program(&mut self, program: usize) -> bool {
         if program >= self.library.len() {
             return false;

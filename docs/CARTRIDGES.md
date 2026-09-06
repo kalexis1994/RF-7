@@ -64,10 +64,26 @@ boundaries, and says how many bytes were out of range.
 
 ## In RackForge
 
-The package declares one optional file resource, `cartridge`, whose private
-location is `<data-root>/plugins/org.rackforge.rf7/cartridges/current.syx`.
-Install a `.syx` through RackForge's own resource installation; RF-7 never
-opens that path itself and receives only the bytes.
+RF-7's **SETUP** surface installs one. Open the plugin from RackForge's
+Plugins section and press *Install…*: the host opens its own file explorer,
+copies what you choose, prepares a replacement instance away from the audio
+callback and swaps it at a block boundary. *Remove* puts the factory bank
+back. Files the host has been pointed at before are listed under *Already
+chosen*, so the same cartridge goes back in without the explorer. The host
+reports only that a cartridge is installed, so the surface remembers which of
+those files it installed last and prints its name as the source, with its pad
+lit, for as long as the host still lists it.
+
+Setting the library up is not something to reach for while playing, which is
+why it is a surface of its own: RackForge keeps program selection and voice
+editing in PLAY, and libraries, resources and diagnostics in CONFIG.
+
+Underneath, the package declares one optional file resource, `cartridge`,
+whose private location is
+`<data-root>/plugins/org.rackforge.rf7/cartridges/current.syx`. The explorer,
+the permission and the copy are all the host's: RF-7 is handed the bytes and
+never sees a path, and the surface asks for the file by the resource's name
+rather than by any location of its own.
 
 Once a cartridge is delivered, RF-7 publishes its voices as the plugin's
 programs, `program-001` upwards, named as the cartridge names them and grouped

@@ -148,6 +148,8 @@ pub struct Parameter {
     pub page: String,
     pub kind: ParameterKind,
     pub value: f64,
+    /// Where the schema puts it, which is where a double-click returns it.
+    pub default: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -176,9 +178,27 @@ pub struct Parameters {
     pub parameters: Vec<Parameter>,
 }
 
+/// A file the host has granted this plugin before, and can grant again
+/// without opening its explorer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Grant {
+    pub id: String,
+    pub name: String,
+    pub resource: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
     pub connected: bool,
+    /// Which of the plugin's two surfaces this is: `play` or `config`.
+    pub surface: String,
+    /// One entry per declared resource: whether a file is installed in it.
+    pub resources: Vec<(String, bool)>,
+    pub grants: Vec<Grant>,
+    /// What the config surface is waiting for, if anything.
+    pub busy: String,
+    /// The last thing that happened, for the player to read.
+    pub notice: String,
     pub lighting: String,
     pub status: String,
     /// Which page of the panel is showing. The surface owns this; the host
@@ -191,6 +211,15 @@ pub struct State {
     /// draft's value so a slider does not jump while its request is in flight.
     pub pending_fields: BTreeMap<String, (FieldValue, bool)>,
     pub pending_parameters: BTreeMap<usize, (f64, bool)>,
+    /// Every field as it was when the draft opened, so one knob can be sent
+    /// back to where it started without leaving the edit.
+    pub baseline: BTreeMap<String, FieldValue>,
+    /// COMPARE is down: the program as it opened is what plays and what the
+    /// knobs show, and nothing can be edited until it is released.
+    pub comparing: bool,
+    /// The grant SETUP installed last, so the cartridge can be named. The
+    /// host reports only that something is installed.
+    pub installed_grant: Option<String>,
 }
 
 impl State {
@@ -200,12 +229,30 @@ impl State {
             return false;
         }
         self.connected = true;
+        if let Some(surface) = message["surface"].as_str() {
+            self.surface = surface.to_owned();
+        }
         if let Some(lighting @ ("day" | "stage")) = message["host"]["lighting"].as_str() {
             self.lighting = lighting.to_owned();
         }
         self.instance = Some(read_instance(&message["instance"]));
         let had_draft = self.draft.is_some();
+        let previous_id = self.draft.as_ref().map(|d| d.draft_id);
         self.draft = read_draft(&message["program_draft"]);
+        match &self.draft {
+            Some(draft) if previous_id != Some(draft.draft_id) => {
+                self.baseline = draft
+                    .fields
+                    .iter()
+                    .map(|(id, field)| (id.clone(), field.value.clone()))
+                    .collect();
+            }
+            None => self.baseline.clear(),
+            _ => {}
+        }
+        if self.draft.is_none() || previous_id != self.draft.as_ref().map(|d| d.draft_id) {
+            self.comparing = false;
+        }
         // Opening a program puts the panel on the voice page; closing one
         // sends it back to the library rather than leaving an empty plate.
         match (had_draft, self.draft.is_some()) {
@@ -258,12 +305,41 @@ impl State {
         instance.sounds.iter().find(|s| s.id == id)
     }
 
-    /// The value a field shows: the edit in flight, else the draft's.
+    /// The value a field shows: the program as it opened while COMPARE is
+    /// down, else the edit in flight, else the draft's.
     pub fn field_value(&self, id: &str) -> Option<FieldValue> {
+        if self.comparing
+            && let Some(value) = self.baseline.get(id)
+        {
+            return Some(value.clone());
+        }
         if let Some((value, _)) = self.pending_fields.get(id) {
             return Some(value.clone());
         }
         self.draft.as_ref()?.fields.get(id).map(|f| f.value.clone())
+    }
+
+    /// The fields the edit has moved, with the value each had when the draft
+    /// opened: what COMPARE plays.
+    pub fn moved_fields(&self) -> Vec<(String, FieldValue)> {
+        let Some(draft) = &self.draft else {
+            return Vec::new();
+        };
+        self.baseline
+            .iter()
+            .filter(|(id, opened)| draft.fields.get(*id).is_some_and(|f| f.value != **opened))
+            .map(|(id, opened)| (id.clone(), opened.clone()))
+            .collect()
+    }
+
+    /// The name SETUP can give the installed cartridge: the grant it
+    /// installed last, if the host still lists it.
+    pub fn installed_cartridge_name(&self) -> Option<&str> {
+        let id = self.installed_grant.as_deref()?;
+        self.grants
+            .iter()
+            .find(|grant| grant.id == id)
+            .map(|grant| grant.name.as_str())
     }
 
     pub fn parameter_value(&self, index: usize) -> Option<f64> {
@@ -276,6 +352,48 @@ impl State {
             .iter()
             .find(|p| p.index == index)
             .map(|p| p.value)
+    }
+
+    /// Whether a file is installed in one of the plugin's resources.
+    pub fn resource_installed(&self, id: &str) -> bool {
+        self.resources
+            .iter()
+            .any(|(resource, installed)| resource == id && *installed)
+    }
+
+    /// Read `plugin.resource_status`: one entry per declared resource.
+    pub fn apply_resources(&mut self, result: &Value) -> bool {
+        let Some(entries) = result.as_array() else {
+            return false;
+        };
+        self.resources = entries
+            .iter()
+            .filter_map(|entry| {
+                Some((
+                    entry["resource_id"].as_str()?.to_owned(),
+                    entry["installed"].as_bool().unwrap_or(false),
+                ))
+            })
+            .collect();
+        true
+    }
+
+    /// Read `plugin.resource_bindings`: the files granted before.
+    pub fn apply_grants(&mut self, result: &Value) -> bool {
+        let Some(entries) = result.as_array() else {
+            return false;
+        };
+        self.grants = entries
+            .iter()
+            .filter_map(|entry| {
+                Some(Grant {
+                    id: entry["grant_id"].as_str()?.to_owned(),
+                    name: string(&entry["display_name"]),
+                    resource: string(&entry["resource_id"]),
+                })
+            })
+            .collect();
+        true
     }
 
     pub fn disconnect(&mut self, status: &str) {
@@ -438,6 +556,12 @@ fn read_parameters(result: &Value) -> Option<Parameters> {
             },
             _ => continue,
         };
+        let default = match &kind {
+            ParameterKind::Boolean => f64::from(u8::from(
+                parameter["kind"]["default"].as_bool().unwrap_or(false),
+            )),
+            _ => parameter["kind"]["default"].as_f64().unwrap_or(0.0),
+        };
         parameters.push(Parameter {
             index,
             id: string(&parameter["id"]),
@@ -445,6 +569,7 @@ fn read_parameters(result: &Value) -> Option<Parameters> {
             page: string(&parameter["page"]),
             kind,
             value: *values.get(&index)?,
+            default,
         });
     }
     parameters.sort_by_key(|p| p.index);
@@ -565,6 +690,64 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_draft_as_it_opened_is_kept_until_it_closes() {
+        let mut state = State::default();
+        state.apply_context(&context(), "org.rackforge.rf7");
+        assert_eq!(
+            state.baseline.get("feedback"),
+            Some(&FieldValue::Integer(6))
+        );
+        // The host echoes an edit: the baseline does not move with it.
+        let mut edited = context();
+        edited["program_draft"]["editor"]["pages"][0]["fields"][1]["value"] =
+            json!({"type": "integer", "value": 2});
+        state.apply_context(&edited, "org.rackforge.rf7");
+        assert_eq!(state.draft.as_ref().unwrap().integer("feedback"), Some(2));
+        assert_eq!(
+            state.baseline.get("feedback"),
+            Some(&FieldValue::Integer(6))
+        );
+        // A new draft is a new baseline; no draft is none.
+        edited["program_draft"]["draft_id"] = json!(8);
+        state.apply_context(&edited, "org.rackforge.rf7");
+        assert_eq!(
+            state.baseline.get("feedback"),
+            Some(&FieldValue::Integer(2))
+        );
+        edited["program_draft"] = Value::Null;
+        state.apply_context(&edited, "org.rackforge.rf7");
+        assert!(state.baseline.is_empty());
+    }
+
+    #[test]
+    fn compare_shows_and_names_only_what_the_edit_has_moved() {
+        let mut state = State::default();
+        state.apply_context(&context(), "org.rackforge.rf7");
+        assert!(state.moved_fields().is_empty(), "nothing moved yet");
+        let mut edited = context();
+        edited["program_draft"]["editor"]["pages"][0]["fields"][1]["value"] =
+            json!({"type": "integer", "value": 2});
+        state.apply_context(&edited, "org.rackforge.rf7");
+        assert_eq!(
+            state.moved_fields(),
+            vec![("feedback".to_owned(), FieldValue::Integer(6))]
+        );
+        state.comparing = true;
+        assert_eq!(state.field_value("feedback"), Some(FieldValue::Integer(6)));
+        assert_eq!(
+            state.field_value("op1.coarse"),
+            Some(FieldValue::Integer(1))
+        );
+        // The same draft echoed again keeps comparing; another draft, or
+        // none, releases the key.
+        state.apply_context(&edited, "org.rackforge.rf7");
+        assert!(state.comparing);
+        edited["program_draft"] = Value::Null;
+        state.apply_context(&edited, "org.rackforge.rf7");
+        assert!(!state.comparing);
+    }
+
+    #[test]
     fn a_pending_edit_shows_until_the_host_has_answered_and_echoed_it() {
         let mut state = State::default();
         state.apply_context(&context(), "org.rackforge.rf7");
@@ -581,6 +764,54 @@ pub(crate) mod tests {
         state.pending_fields.get_mut("feedback").unwrap().1 = true;
         state.apply_context(&context(), "org.rackforge.rf7");
         assert_eq!(state.field_value("feedback"), Some(FieldValue::Integer(6)));
+    }
+
+    #[test]
+    fn the_config_surface_reads_what_the_host_has_installed_and_granted() {
+        let mut state = State::default();
+        let mut context = context();
+        context["surface"] = json!("config");
+        assert!(state.apply_context(&context, "org.rackforge.rf7"));
+        assert_eq!(state.surface, "config");
+
+        assert!(state.apply_resources(&json!([
+            {"resource_id": "cartridge", "installed": true}
+        ])));
+        assert!(state.resource_installed("cartridge"));
+        assert!(!state.resource_installed("something-else"));
+        assert!(state.apply_resources(&json!([
+            {"resource_id": "cartridge", "installed": false}
+        ])));
+        assert!(!state.resource_installed("cartridge"));
+        assert!(!state.apply_resources(&json!({"resource_id": "cartridge"})));
+
+        assert!(state.apply_grants(&json!([
+            {"grant_id": "g1", "resource_id": "cartridge", "display_name": "ROM1A.syx", "kind": "file"},
+            {"missing": "a grant id"}
+        ])));
+        assert_eq!(
+            state.grants.len(),
+            1,
+            "an entry without an id is not a grant"
+        );
+        assert_eq!(state.grants[0].name, "ROM1A.syx");
+    }
+
+    #[test]
+    fn the_installed_cartridge_is_named_only_while_the_host_still_lists_it() {
+        let mut state = State {
+            grants: vec![Grant {
+                id: "g1".into(),
+                name: "ROM1A.syx".into(),
+                resource: "cartridge".into(),
+            }],
+            ..State::default()
+        };
+        assert_eq!(state.installed_cartridge_name(), None);
+        state.installed_grant = Some("g1".into());
+        assert_eq!(state.installed_cartridge_name(), Some("ROM1A.syx"));
+        state.grants.clear();
+        assert_eq!(state.installed_cartridge_name(), None);
     }
 
     #[test]
@@ -605,6 +836,11 @@ pub(crate) mod tests {
             parameters.parameters[1].kind,
             ParameterKind::Enum { .. }
         ));
+        assert_eq!(parameters.parameters[0].default, 0.3);
+        assert_eq!(
+            parameters.parameters[2].default, 1.0,
+            "a boolean default reads as 1"
+        );
         state.apply_parameter_change(&json!({"parameter_index": 0, "value": 0.5}));
         assert_eq!(state.parameter_value(0), Some(0.5));
         // A value missing from the snapshot is a snapshot refused.

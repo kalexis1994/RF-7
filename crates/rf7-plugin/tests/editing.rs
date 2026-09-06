@@ -307,6 +307,26 @@ fn a_saved_program_reopens_under_its_own_id_and_a_new_one_starts_from_init() {
 }
 
 #[test]
+fn a_program_change_past_the_library_reaches_the_saved_programs() {
+    let mut processor = prepared();
+    let opened = begin(&mut processor, Some("program-001"));
+    save(&mut processor, &opened.document);
+    let library = processor.program_count();
+    let change = |processor: &mut Rf7Processor, number: u8| {
+        let event = [MidiEvent::new(0, [0xc0, number, 0], 2).unwrap()];
+        let mut output = vec![0.0; FRAMES as usize * 2];
+        processor.process(&[], &mut output, &event, &[], FRAMES, 0, 2);
+    };
+    change(&mut processor, library as u8);
+    assert_eq!(processor.selected_sound_id(), "custom.user.rf7-001");
+    // A number nothing answers to leaves the selection alone.
+    change(&mut processor, library as u8 + 1);
+    assert_eq!(processor.selected_sound_id(), "custom.user.rf7-001");
+    change(&mut processor, 4);
+    assert_eq!(processor.selected_sound_id(), "program-005");
+}
+
+#[test]
 fn saved_programs_survive_a_new_cartridge_a_reload_and_a_session() {
     let mut processor = prepared();
     let opened = begin(&mut processor, Some("program-001"));

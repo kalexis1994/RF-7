@@ -22,13 +22,17 @@ The voices a DX7 shipped with are Yamaha's; RF-7 plays a cartridge you supply.
 
 ## Controls
 
-Twenty parameters, in five pages. They are offsets on the loaded program,
+Twenty-six parameters, in five pages. They are offsets on the loaded program,
 not a second copy of it, and every one of them is neutral at its default:
 
 - **Output** — output gain.
-- **Performance** — bend range, master tune, transpose, and a range and
-  destination each for the modulation wheel and for aftertouch. This is the
-  DX7's own function-parameter layer, which never lived in a cartridge.
+- **Performance** — bend range, master tune, transpose, a range and
+  destination each for the modulation wheel, aftertouch, the breath controller
+  and the foot controller, the voice mode and the portamento time. This is the
+  DX7's own function-parameter layer, which never lived in a cartridge. Each
+  controller reaches pitch, amplitude, both, or the envelope bias — the
+  destination a breath controller is for, where the note sits below its
+  programmed level until the player brings it up.
 - **Voice** — brightness, envelope time and velocity depth. These the DX7 did
   not have; they are one-knob ways to move a whole cartridge at once, next to
   the editor that moves one voice. Brightness scales the modulation index of
@@ -38,6 +42,15 @@ not a second copy of it, and every one of them is neutral at its default:
   speed, vibrato added to its depth, seconds added to its delay. A program
   with no vibrato of its own answers to these.
 - **Operators** — six switches, one per operator.
+
+In **mono** the instrument plays one note at a time with last-note priority:
+a key played over another takes the voice without starting its envelopes
+again, and releasing it hands the voice back to whichever key is still down.
+**Portamento** glides between notes on the instrument's own 0–99 dial, in
+poly as well as mono, and controller 65 switches a glide that is set off and
+on. Controllers 7 and 11 — channel volume and expression — scale the output,
+and a program change past the library's last slot reaches the programs saved
+from the editor, in catalog order.
 
 RF-7 publishes six of RackForge's standard control roles, so a controller's
 knobs find them without the player mapping anything: `plugin.output.level`
@@ -117,6 +130,8 @@ the host's own validators reading every envelope the plugin emits.
 
 ## Cartridges
 
+Install one from RF-7's SETUP surface, which RackForge opens from its Plugins
+section: the host's own explorer chooses the file and the host installs it.
 RF-7 reads System Exclusive dumps, several of them in one file, a single voice
 on its own, and cartridge ROM images taken straight off the chip with no
 framing or checksum at all. Their voices become the plugin's programs — up to

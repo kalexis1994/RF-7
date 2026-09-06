@@ -3,12 +3,15 @@ id = "org.rackforge.rf7"
 name = "RF-7"
 short_name = "RF-7"
 vendor = "RackForge"
-version = "0.3.0"
+version = "0.4.0"
 description = "Six-operator FM instrument: the 32 algorithms, the four-segment envelopes, the cartridges you already own, and a voice editor in every surface"
 kind = "instrument"
 state_version = 2
 capabilities = ["audio_output", "midi_input", "presets", "state"]
 ui_layouts = ["little@1"]
+# The cartridge is installed on its own surface: it is setup, done once, and
+# not something to reach for while playing.
+config_mode = true
 
 [api]
 major = 1
@@ -33,6 +36,10 @@ api_version = 1
 [[web_ui.surfaces]]
 kind = "play"
 entry = "web/play.html"
+
+[[web_ui.surfaces]]
+kind = "config"
+entry = "web/config.html"
 
 # No voice data is shipped. The user installs a cartridge they own, and its
 # thirty-two voices become the plugin's thirty-two programs.

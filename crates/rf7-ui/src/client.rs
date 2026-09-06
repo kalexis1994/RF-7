@@ -17,6 +17,10 @@ pub struct Request {
     pub key: String,
     pub method: String,
     pub params: Value,
+    /// A request the host may sit on: a file dialog waiting for the player,
+    /// or a cartridge being installed and an instance rebuilt around it.
+    /// These are not given up on.
+    pub patient: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,7 +59,7 @@ impl Client {
         if self
             .pending
             .as_ref()
-            .is_some_and(|(_, _, sent)| now - sent > TIMEOUT_MS)
+            .is_some_and(|(_, request, sent)| !request.patient && now - sent > TIMEOUT_MS)
         {
             self.pending = None;
             self.queue.clear();
@@ -108,76 +112,137 @@ impl Client {
     }
 }
 
-pub fn fetch_parameters() -> Request {
+/// A request the host answers at once.
+fn prompt(key: &str, method: &str, params: Value) -> Request {
     Request {
-        key: "parameters".into(),
-        method: "plugin.parameters".into(),
-        params: json!({}),
+        key: key.to_owned(),
+        method: method.to_owned(),
+        params,
+        patient: false,
     }
+}
+
+/// A request that waits on the player or on real work.
+fn patient(key: &str, method: &str, params: Value) -> Request {
+    Request {
+        key: key.to_owned(),
+        method: method.to_owned(),
+        params,
+        patient: true,
+    }
+}
+
+pub fn fetch_parameters() -> Request {
+    prompt("parameters", "plugin.parameters", json!({}))
+}
+
+/// Which of the plugin's declared resources are installed.
+pub fn resource_status() -> Request {
+    prompt("resources", "plugin.resource_status", json!({}))
+}
+
+/// The files this plugin has been granted before.
+pub fn resource_bindings() -> Request {
+    prompt("bindings", "plugin.resource_bindings", json!({}))
+}
+
+/// Open the host's own file explorer. It answers when the player has chosen,
+/// or with a cancellation, and there is no telling how long that takes.
+pub fn select_resource(resource_id: &str, extensions: &[&str]) -> Request {
+    patient(
+        "choose",
+        "plugin.select_resource",
+        json!({"resource_id": resource_id, "extensions": extensions}),
+    )
+}
+
+/// Install a granted file into one of the plugin's resources. The host
+/// prepares a replacement instance and swaps it at a block boundary.
+pub fn install_resource(target: &str, grant: &str) -> Request {
+    patient(
+        "install",
+        "plugin.install_resource",
+        json!({"target_resource_id": target, "grant_id": grant}),
+    )
+}
+
+/// Remove an installed resource, which puts the package's own back.
+pub fn clear_resource(target: &str) -> Request {
+    patient(
+        "clear",
+        "plugin.clear_resource",
+        json!({"target_resource_id": target}),
+    )
 }
 
 pub fn set_parameter(index: usize, value: f64) -> Request {
-    Request {
-        key: format!("param:{index}"),
-        method: "plugin.set_parameter".into(),
-        params: json!({"parameter_index": index, "value": value}),
-    }
+    prompt(
+        &format!("param:{index}"),
+        "plugin.set_parameter",
+        json!({"parameter_index": index, "value": value}),
+    )
 }
 
 pub fn select_sound(sound_id: &str) -> Request {
-    Request {
-        key: "select".into(),
-        method: "plugin.select_sound".into(),
-        params: json!({"sound_id": sound_id}),
-    }
+    prompt(
+        "select",
+        "plugin.select_sound",
+        json!({"sound_id": sound_id}),
+    )
 }
 
 pub fn begin_program_edit(program_id: Option<&str>) -> Request {
-    Request {
-        key: "begin".into(),
-        method: "plugin.begin_program_edit".into(),
-        params: json!({"program_id": program_id}),
-    }
+    prompt(
+        "begin",
+        "plugin.begin_program_edit",
+        json!({"program_id": program_id}),
+    )
 }
 
 pub fn edit_field(draft_id: u64, field_id: &str, value: &Value, preview: bool) -> Request {
-    Request {
-        key: format!("field:{field_id}"),
-        method: "plugin.edit_program_field".into(),
-        params: json!({"draft_id": draft_id, "field_id": field_id, "value": value, "preview": preview}),
-    }
+    prompt(
+        &format!("field:{field_id}"),
+        "plugin.edit_program_field",
+        json!({"draft_id": draft_id, "field_id": field_id, "value": value, "preview": preview}),
+    )
 }
 
 pub fn set_program_name(draft_id: u64, name: &str) -> Request {
-    Request {
-        key: "name".into(),
-        method: "plugin.set_program_name".into(),
-        params: json!({"draft_id": draft_id, "name": name}),
-    }
+    prompt(
+        "name",
+        "plugin.set_program_name",
+        json!({"draft_id": draft_id, "name": name}),
+    )
+}
+
+/// Back to the confirmed draft after transient previews: what releases
+/// COMPARE.
+pub fn restore_program_preview(draft_id: u64) -> Request {
+    prompt(
+        "restore",
+        "plugin.restore_program_preview",
+        json!({"draft_id": draft_id}),
+    )
 }
 
 pub fn save_program(draft_id: u64) -> Request {
-    Request {
-        key: "save".into(),
-        method: "plugin.save_program".into(),
-        params: json!({"draft_id": draft_id}),
-    }
+    prompt("save", "plugin.save_program", json!({"draft_id": draft_id}))
 }
 
 pub fn cancel_program(draft_id: u64) -> Request {
-    Request {
-        key: "cancel".into(),
-        method: "plugin.cancel_program".into(),
-        params: json!({"draft_id": draft_id}),
-    }
+    prompt(
+        "cancel",
+        "plugin.cancel_program",
+        json!({"draft_id": draft_id}),
+    )
 }
 
 pub fn surface_info(label: &str, value: Option<&str>) -> Request {
-    Request {
-        key: "info".into(),
-        method: "plugin.set_surface_info".into(),
-        params: json!({"label": label, "value": value}),
-    }
+    prompt(
+        "info",
+        "plugin.set_surface_info",
+        json!({"label": label, "value": value}),
+    )
 }
 
 #[cfg(test)]
@@ -223,6 +288,21 @@ mod tests {
         assert_eq!(set["params"]["parameter_index"], 0);
         client.reply(&ok(&set, json!({"value": 0.5})));
         assert!(client.is_idle());
+    }
+
+    #[test]
+    fn a_request_the_host_may_sit_on_is_never_given_up_on() {
+        // The file explorer waits for the player, and installing a cartridge
+        // rebuilds an instance. Neither is a host that stopped answering.
+        let mut client = Client::default();
+        client.queue(select_resource("cartridge", &["syx"]));
+        let sent = client.next(0.0).unwrap();
+        assert!(!client.timed_out(600_000.0));
+        let reply = client.reply(&ok(&sent, json!({"grant_id": "g1"}))).unwrap();
+        assert_eq!(reply.key, "choose");
+        assert!(install_resource("cartridge", "g1").patient);
+        assert!(clear_resource("cartridge").patient);
+        assert!(!resource_status().patient);
     }
 
     #[test]

@@ -13,7 +13,8 @@
 use rf7_dsp::{
     BEND_SEMITONES_DEFAULT, BEND_SEMITONES_MAX, BRIGHTNESS_MAX, Controls, DEFAULT_GAIN,
     ENVELOPE_TIME_MAX, ENVELOPE_TIME_MIN, GAIN_MAX, LFO_DELAY_MAX, LFO_DEPTH_MAX, LFO_RATE_MAX,
-    LFO_RATE_MIN, OPERATORS, TRANSPOSE_MAX, TUNE_CENTS_MAX, Target, VELOCITY_DEPTH_MAX,
+    LFO_RATE_MIN, OPERATORS, PORTAMENTO_TIME_MAX, TRANSPOSE_MAX, TUNE_CENTS_MAX, Target,
+    VELOCITY_DEPTH_MAX, VoiceMode,
 };
 
 pub const GAIN: u32 = 0;
@@ -35,8 +36,18 @@ pub const OPERATOR_FIRST: u32 = 11;
 pub const LFO_RATE: u32 = OPERATOR_FIRST + OPERATORS as u32;
 pub const LFO_DEPTH: u32 = LFO_RATE + 1;
 pub const LFO_DELAY: u32 = LFO_RATE + 2;
+/// How the keyboard is played: sixteen notes at once, or one at a time with
+/// last-note priority. The glide between them is the instrument's own dial.
+pub const VOICE_MODE: u32 = LFO_DELAY + 1;
+pub const PORTAMENTO_TIME: u32 = VOICE_MODE + 1;
+/// The breath controller and the foot controller — controllers 2 and 4 on the
+/// instrument — each with a reach and a destination like the wheel.
+pub const BREATH_RANGE: u32 = PORTAMENTO_TIME + 1;
+pub const BREATH_TARGET: u32 = BREATH_RANGE + 1;
+pub const FOOT_RANGE: u32 = BREATH_RANGE + 2;
+pub const FOOT_TARGET: u32 = BREATH_RANGE + 3;
 
-pub const COUNT: usize = LFO_DELAY as usize + 1;
+pub const COUNT: usize = FOOT_TARGET as usize + 1;
 
 /// Which shape the schema must declare. The host draws from this; RF-7 only
 /// needs it to check that the two descriptions of a parameter match.
@@ -98,6 +109,12 @@ pub const PARAMETERS: [Parameter; COUNT] = [
     float("lfo_rate", LFO_RATE_MIN as f64, LFO_RATE_MAX as f64, 1.0),
     float("lfo_depth", 0.0, LFO_DEPTH_MAX as f64, 0.0),
     float("lfo_delay", 0.0, LFO_DELAY_MAX as f64, 0.0),
+    mode("voice_mode"),
+    integer("portamento_time", 0.0, PORTAMENTO_TIME_MAX as f64, 0.0),
+    float("breath_range", 0.0, 1.0, 0.0),
+    choice("breath_target", 3.0),
+    float("foot_range", 0.0, 1.0, 0.0),
+    choice("foot_target", 3.0),
 ];
 
 const fn float(id: &'static str, minimum: f64, maximum: f64, default: f64) -> Parameter {
@@ -120,14 +137,25 @@ const fn integer(id: &'static str, minimum: f64, maximum: f64, default: f64) -> 
     }
 }
 
-/// Pitch, amplitude or both.
+/// Pitch, amplitude, both, or the envelope bias.
 const fn choice(id: &'static str, default: f64) -> Parameter {
     Parameter {
         id,
         kind: Kind::Enum,
         minimum: 0.0,
-        maximum: 2.0,
+        maximum: 3.0,
         default,
+    }
+}
+
+/// Poly or mono: two positions, so the maximum is one.
+const fn mode(id: &'static str) -> Parameter {
+    Parameter {
+        id,
+        kind: Kind::Enum,
+        minimum: 0.0,
+        maximum: 1.0,
+        default: 0.0,
     }
 }
 
@@ -180,12 +208,18 @@ pub fn controls(values: &[f64; COUNT]) -> Controls {
         aftertouch_target: Target::from_index(
             values[AFTERTOUCH_TARGET as usize].round().max(0.0) as u32
         ),
+        breath_range: values[BREATH_RANGE as usize] as f32,
+        breath_target: Target::from_index(values[BREATH_TARGET as usize].round().max(0.0) as u32),
+        foot_range: values[FOOT_RANGE as usize] as f32,
+        foot_target: Target::from_index(values[FOOT_TARGET as usize].round().max(0.0) as u32),
         brightness: values[BRIGHTNESS as usize] as f32,
         envelope_time: values[ENVELOPE_TIME as usize] as f32,
         velocity_depth: values[VELOCITY_DEPTH as usize] as f32,
         lfo_rate: values[LFO_RATE as usize] as f32,
         lfo_depth: values[LFO_DEPTH as usize] as f32,
         lfo_delay: values[LFO_DELAY as usize] as f32,
+        voice_mode: VoiceMode::from_index(values[VOICE_MODE as usize].round().max(0.0) as u32),
+        portamento_time: values[PORTAMENTO_TIME as usize] as f32,
         operators,
     }
 }

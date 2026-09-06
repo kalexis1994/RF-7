@@ -28,6 +28,18 @@ pub(crate) fn host_root() -> Result<std::path::PathBuf, Box<dyn Error>> {
 
 pub(crate) fn build_to(output: &Path) -> Result<(), Box<dyn Error>> {
     let root = workspace_root()?;
+    // The component is built here rather than taken from wherever the target
+    // directory happens to be, so a package can never be validated against
+    // the WASM of an earlier edit.
+    run(Command::new("cargo").current_dir(&root).args([
+        "build",
+        "--locked",
+        "--release",
+        "--target",
+        "wasm32-unknown-unknown",
+        "-p",
+        "rf7-plugin",
+    ]))?;
     let host = host_root()?;
     let tools = host.join("target/release");
     let store = tools.join(format!("rackforge-store{}", std::env::consts::EXE_SUFFIX));

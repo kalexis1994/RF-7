@@ -8,7 +8,7 @@
 use std::{error::Error, fs::OpenOptions, io::Write, path::Path, process::Command};
 
 pub const GENERATED: [&str; 2] = ["web/app.js", "web/app_bg.wasm"];
-pub const STATIC: [&str; 2] = ["web/play.html", "web/style.css"];
+pub const STATIC: [&str; 3] = ["web/play.html", "web/config.html", "web/style.css"];
 const BINDGEN_VERSION: &str = "wasm-bindgen 0.2.127";
 
 /// Every surface file the installed package holds must be the one just

@@ -228,6 +228,52 @@ pub fn lfo_delay_seconds(delay: u8) -> f32 {
     position * position * 4.0
 }
 
+/// The firmware's pitch rate table, `TABLE_PITCH_EG_RATE`, indexed 0..=99.
+///
+/// It quantises a panel rate to the increment the hardware adds per update.
+/// The portamento reads it backwards — `[99 - time]` — so a time of 0 gives
+/// 255, which crosses any interval within one update, and a time of 99 gives
+/// 1, the slowest glide the instrument can make.
+const PITCH_RATE: [u8; 100] = [
+    1, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15, 16,
+    16, 17, 18, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30, 31, 33, 34, 36, 37, 38, 39, 41, 42,
+    44, 46, 47, 49, 51, 53, 54, 56, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 79, 82, 85, 88, 91, 94,
+    98, 102, 106, 110, 115, 120, 125, 130, 135, 141, 147, 153, 159, 165, 171, 178, 185, 193, 202,
+    211, 232, 243, 254, 255,
+];
+
+/// The instrument's pitch is logarithmic with 1024 units to the octave, which
+/// is what `VOICE_CONVERT_NOTE_TO_LOG_FREQ` documents and what the portamento
+/// increment is counted in.
+const PITCH_UNITS_PER_OCTAVE: f32 = 1024.0;
+
+/// How often the hardware moves a gliding voice, in updates per second.
+///
+/// `PORTA_PROCESS` runs from the periodic timer interrupt and takes half the
+/// sixteen voices each time, so a voice is moved every second tick. The tick
+/// is the timer's 3140 counts, which is about 374 Hz on the instrument's
+/// clock. The rate table is the firmware's; this number is the one part of
+/// the timing that is inferred rather than read, and it is what a recording
+/// would settle.
+const PORTAMENTO_UPDATES_PER_SECOND: f32 = 187.0;
+
+/// Portamento time 0..=99 to the semitones a glide covers each second.
+///
+/// The firmware's step is `((distance >> 10) + 1) * rate` in pitch units, so
+/// within an octave the glide runs at a constant rate — a straight line in
+/// the logarithmic pitch domain — and speeds up by one whole step for every
+/// further octave. [`portamento_octave_boost`] is that multiplier.
+pub fn portamento_semitones_per_second(time: u8) -> f32 {
+    let rate = f32::from(PITCH_RATE[usize::from(99 - time.min(99))]);
+    rate * PORTAMENTO_UPDATES_PER_SECOND / PITCH_UNITS_PER_OCTAVE * 12.0
+}
+
+/// The firmware's `(distance >> 10) + 1`: one extra step of speed for every
+/// octave still to cross.
+pub fn portamento_octave_boost(semitones: f32) -> f32 {
+    (semitones.abs() / 12.0).floor() + 1.0
+}
+
 /// Pitch modulation sensitivity 0..=7 to semitones at full depth.
 pub fn pitch_mod_semitones(sensitivity: u8) -> f32 {
     const STEPS: [f32; 8] = [0.0, 10.0, 20.0, 33.0, 55.0, 92.0, 153.0, 255.0];
@@ -398,5 +444,30 @@ mod tests {
         assert!(lfo_hertz(50) > lfo_hertz(49));
         assert_eq!(lfo_delay_seconds(0), 0.0);
         assert!(lfo_delay_seconds(99) > 3.0);
+    }
+
+    #[test]
+    fn the_portamento_runs_from_the_firmwares_own_rate_table() {
+        // Time 0 crosses an octave inside a single update, which is what the
+        // instrument means by an instant switch.
+        assert!(portamento_semitones_per_second(0) > 12.0 * 187.0 / 12.0);
+        // The slowest glide takes several seconds to the octave.
+        let slowest = portamento_semitones_per_second(99);
+        assert!(
+            (12.0 / slowest - 5.5).abs() < 0.2,
+            "{slowest} semitones a second"
+        );
+        // Monotonic: more time is always slower.
+        for time in 1..=99u8 {
+            assert!(
+                portamento_semitones_per_second(time) <= portamento_semitones_per_second(time - 1),
+                "time {time} is not slower than {}",
+                time - 1
+            );
+        }
+        assert_eq!(portamento_octave_boost(0.0), 1.0);
+        assert_eq!(portamento_octave_boost(-11.9), 1.0);
+        assert_eq!(portamento_octave_boost(12.0), 2.0);
+        assert_eq!(portamento_octave_boost(-25.0), 3.0);
     }
 }

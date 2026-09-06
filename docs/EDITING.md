@@ -41,7 +41,10 @@ whether the algorithm makes it a carrier or a modulator, so the output level
 field reads correctly: on a modulator it is the modulation depth.
 
 Every field previews live. Change a value and the next note plays it; the host
-restores whatever was selected before when the editor closes.
+restores whatever was selected before when the editor closes. COMPARE on the
+head rail plays the program as it opened — every moved field goes back as a
+transient preview, and releasing the key asks the host for the confirmed
+draft — so an edit can be heard against where it started without losing it.
 
 Values are shown as the panel shows them: transpose from −24 to +24 rather than
 0 to 48, detune from −7 to +7, algorithms numbered from 1. A value outside a

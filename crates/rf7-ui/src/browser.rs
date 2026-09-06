@@ -10,14 +10,18 @@ use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{JsCast, prelude::*};
 use web_sys::{
     Document, Element, Event, HtmlInputElement, HtmlSelectElement, MessageEvent, PointerEvent,
-    Window,
+    WheelEvent, Window,
 };
 
 const SECTIONS: [&str; 3] = ["header", "tabs", "page"];
+/// Where the browser keeps the grant SETUP installed last.
+const INSTALLED_GRANT_KEY: &str = "rf7.cartridge.grant";
 const POLL_MS: f64 = 3000.0;
 /// How far a pointer travels for a knob's whole range, in pixels. The other
 /// RackForge instruments use the same throw.
 const KNOB_THROW: f64 = 180.0;
+/// With Shift held the same travel covers a tenth of the range.
+const FINE: f64 = 10.0;
 
 /// A knob under the pointer: the pointer, its input, where it started.
 struct Drag {
@@ -25,6 +29,9 @@ struct Drag {
     input: Element,
     start_y: f64,
     start_value: f64,
+    /// Shift was down when the drag began, or has been pressed since: the
+    /// throw is rebased so the knob does not jump when the key changes.
+    fine: bool,
 }
 
 struct App {
@@ -37,6 +44,8 @@ struct App {
     last_poll: f64,
     info: Option<String>,
     drag: Option<Drag>,
+    /// The grant an install request is carrying, until the host answers.
+    installing: Option<String>,
 }
 type Shared = Rc<RefCell<App>>;
 
@@ -64,9 +73,20 @@ impl App {
         if self.state.connected {
             if self.client.is_idle() && now - self.last_poll > POLL_MS {
                 self.last_poll = now;
-                self.client.queue(client::fetch_parameters());
+                if self.state.surface == "config" {
+                    // The setup surface has no parameters to poll; what can
+                    // change under it is what the host has installed.
+                    self.client.queue(client::resource_status());
+                    self.client.queue(client::resource_bindings());
+                } else {
+                    self.client.queue(client::fetch_parameters());
+                }
             }
-            let info = render::surface_info(&self.state);
+            let info = if self.state.surface == "config" {
+                None
+            } else {
+                render::surface_info(&self.state)
+            };
             if info != self.info {
                 self.info = info.clone();
                 self.client
@@ -116,6 +136,14 @@ impl App {
             let _ = root.set_attribute(
                 "data-editing",
                 if self.state.draft.is_some() {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+            let _ = root.set_attribute(
+                "data-comparing",
+                if self.state.comparing {
                     "true"
                 } else {
                     "false"
@@ -202,6 +230,11 @@ impl App {
     }
 
     fn edit_field(&mut self, id: &str, value: FieldValue, preview: bool) {
+        // While COMPARE is down the program as it opened is playing, and an
+        // edit would be lost under it.
+        if self.state.comparing {
+            return;
+        }
         let Some(draft_id) = self.state.draft.as_ref().map(|d| d.draft_id) else {
             return;
         };
@@ -255,8 +288,31 @@ impl App {
                 }
             }
             ("new", None) => self.client.queue(client::begin_program_edit(None)),
-            ("save", Some(id)) => self.client.queue(client::save_program(id)),
-            ("cancel", Some(id)) => self.client.queue(client::cancel_program(id)),
+            ("save", Some(id)) => {
+                self.release_compare();
+                self.client.queue(client::save_program(id));
+            }
+            ("cancel", Some(id)) => {
+                self.release_compare();
+                self.client.queue(client::cancel_program(id));
+            }
+            ("compare", Some(id)) => {
+                if self.state.comparing {
+                    self.release_compare();
+                } else {
+                    // Every moved field goes back to where it opened, as a
+                    // transient preview: the draft itself is untouched.
+                    let moved = self.state.moved_fields();
+                    if moved.is_empty() {
+                        return;
+                    }
+                    self.state.comparing = true;
+                    for (field, opened) in moved {
+                        self.client
+                            .queue(client::edit_field(id, &field, &opened.to_json(), true));
+                    }
+                }
+            }
             ("name", Some(id)) => {
                 if let Some(input) = element.dyn_ref::<HtmlInputElement>() {
                     let name = input.value();
@@ -271,7 +327,51 @@ impl App {
             }
             ("alg-prev", Some(_)) => self.step_algorithm(-1),
             ("alg-next", Some(_)) => self.step_algorithm(1),
+            ("choose-cartridge", _) => {
+                self.state.busy = "Waiting for the file explorer...".into();
+                self.state.notice.clear();
+                self.client.queue(client::select_resource(
+                    render::CARTRIDGE,
+                    &render::CARTRIDGE_EXTENSIONS,
+                ));
+            }
+            ("clear-cartridge", _) => {
+                self.state.busy = "Removing the cartridge...".into();
+                self.state.notice.clear();
+                self.client.queue(client::clear_resource(render::CARTRIDGE));
+            }
             _ => {}
+        }
+    }
+
+    /// Let go of COMPARE: the host puts the confirmed draft back.
+    fn release_compare(&mut self) {
+        if !self.state.comparing {
+            return;
+        }
+        self.state.comparing = false;
+        if let Some(id) = self.state.draft.as_ref().map(|d| d.draft_id) {
+            self.client.queue(client::restore_program_preview(id));
+        }
+    }
+
+    /// Install a file the host has already granted.
+    fn install_grant(&mut self, grant: &str) {
+        self.state.busy = "Installing the cartridge...".into();
+        self.state.notice.clear();
+        self.installing = Some(grant.to_owned());
+        self.client
+            .queue(client::install_resource(render::CARTRIDGE, grant));
+    }
+
+    /// Remember which grant is installed, across sessions of the surface.
+    fn remember_installed(&mut self, grant: Option<String>) {
+        self.state.installed_grant = grant.clone();
+        if let Ok(Some(storage)) = self.window.local_storage() {
+            let _ = match grant {
+                Some(grant) => storage.set_item(INSTALLED_GRANT_KEY, &grant),
+                None => storage.remove_item(INSTALLED_GRANT_KEY),
+            };
         }
     }
 
@@ -280,7 +380,7 @@ impl App {
             return;
         };
         let Some(element) = target
-            .closest("[data-field],[data-param],[data-sound],[data-action],[data-tab]")
+            .closest("[data-field],[data-param],[data-sound],[data-action],[data-tab],[data-grant]")
             .ok()
             .flatten()
         else {
@@ -343,6 +443,10 @@ impl App {
             if kind == "click" && self.state.draft.is_none() {
                 self.client.queue(client::select_sound(&sound));
             }
+        } else if let Some(grant) = element.get_attribute("data-grant") {
+            if kind == "click" && self.state.busy.is_empty() {
+                self.install_grant(&grant);
+            }
         } else if let Some(action) = element.get_attribute("data-action") {
             let fire = if action == "name" {
                 kind == "change"
@@ -357,18 +461,42 @@ impl App {
     }
 
     /// Turn the knob under the pointer, and tell the host as it moves.
-    fn drag_to(&mut self, current_y: f64, preview: bool) {
-        let Some(drag) = &self.drag else {
+    fn drag_to(&mut self, current_y: f64, shift: bool, preview: bool) {
+        let Some(drag) = &mut self.drag else {
             return;
         };
+        if shift != drag.fine {
+            // Rebase the drag where the key changed, so switching to fine
+            // control continues from the current value instead of jumping.
+            drag.start_value = drag
+                .input
+                .dyn_ref::<HtmlInputElement>()
+                .map(|field| field.value_as_number())
+                .filter(|v| v.is_finite())
+                .unwrap_or(drag.start_value);
+            drag.start_y = current_y;
+            drag.fine = shift;
+        }
         let input = drag.input.clone();
         let minimum = attribute(&input, "min").unwrap_or(0.0);
         let maximum = attribute(&input, "max").unwrap_or(1.0);
-        let step = attribute(&input, "step").unwrap_or(0.0);
         if maximum <= minimum {
             return;
         }
-        let raw = drag.start_value + (drag.start_y - current_y) / KNOB_THROW * (maximum - minimum);
+        let throw = if shift { KNOB_THROW * FINE } else { KNOB_THROW };
+        let raw = drag.start_value + (drag.start_y - current_y) / throw * (maximum - minimum);
+        self.set_knob(&input, raw, preview);
+    }
+
+    /// Put a knob at a value — snapped to its step, kept in its range — and
+    /// tell the host.
+    fn set_knob(&mut self, input: &Element, raw: f64, preview: bool) {
+        if self.state.comparing && input.has_attribute("data-field") {
+            return;
+        }
+        let minimum = attribute(input, "min").unwrap_or(0.0);
+        let maximum = attribute(input, "max").unwrap_or(1.0);
+        let step = attribute(input, "step").unwrap_or(0.0);
         let value = if step.is_finite() && step > 0.0 {
             (minimum + ((raw - minimum) / step).round() * step).clamp(minimum, maximum)
         } else {
@@ -377,7 +505,7 @@ impl App {
         if let Some(field) = input.dyn_ref::<HtmlInputElement>() {
             field.set_value_as_number(value);
         }
-        show_value(&input, value);
+        show_value(input, value);
         if let Some(id) = input.get_attribute("data-field") {
             self.edit_field(&id, FieldValue::Integer(value.round() as i64), preview);
         } else if let Some(index) = input
@@ -388,10 +516,45 @@ impl App {
         }
         self.pump();
     }
+
+    /// One notch of the wheel: one step of the knob, a tenth of the range
+    /// when there is no step, and the same in either case with Shift.
+    fn wheel(&mut self, input: &Element, delta_y: f64, shift: bool) {
+        let current = input
+            .dyn_ref::<HtmlInputElement>()
+            .map(|field| field.value_as_number())
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.0);
+        let minimum = attribute(input, "min").unwrap_or(0.0);
+        let maximum = attribute(input, "max").unwrap_or(1.0);
+        let step = attribute(input, "step")
+            .filter(|s| *s > 0.0)
+            .unwrap_or((maximum - minimum) / 100.0);
+        let notch = if shift {
+            step
+        } else {
+            step.max((maximum - minimum) / 50.0)
+        };
+        let direction = if delta_y < 0.0 { 1.0 } else { -1.0 };
+        self.set_knob(input, current + direction * notch, false);
+    }
 }
 
 fn attribute(element: &Element, name: &str) -> Option<f64> {
     element.get_attribute(name)?.parse().ok()
+}
+
+/// The range input of the knob an event landed on, if it landed on one.
+fn knob_input(target: Option<web_sys::EventTarget>) -> Option<Element> {
+    target?
+        .dyn_into::<Element>()
+        .ok()?
+        .closest("[data-knob]")
+        .ok()
+        .flatten()?
+        .query_selector(".knob-input")
+        .ok()
+        .flatten()
 }
 
 /// Point the knob and refresh the number under it, keeping whatever unit the
@@ -449,6 +612,34 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
         .document
         .get_element_by_id("surface")
         .ok_or_else(|| JsValue::from_str("missing surface root"))?;
+    // The wheel turns a knob a notch; a double-click sends it back to where
+    // it started.
+    {
+        let shared = app.clone();
+        let callback = Closure::<dyn FnMut(WheelEvent)>::new(move |event: WheelEvent| {
+            let Some(input) = knob_input(event.target()) else {
+                return;
+            };
+            event.prevent_default();
+            shared
+                .borrow_mut()
+                .wheel(&input, event.delta_y(), event.shift_key());
+        });
+        root.add_event_listener_with_callback("wheel", callback.as_ref().unchecked_ref())?;
+        callback.forget();
+        let shared = app.clone();
+        let callback = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
+            let Some(input) = knob_input(event.target()) else {
+                return;
+            };
+            let Some(default) = attribute(&input, "data-default") else {
+                return;
+            };
+            shared.borrow_mut().set_knob(&input, default, false);
+        });
+        root.add_event_listener_with_callback("dblclick", callback.as_ref().unchecked_ref())?;
+        callback.forget();
+    }
     for kind in ["pointerdown", "pointermove", "pointerup", "pointercancel"] {
         let shared = app.clone();
         let callback = Closure::<dyn FnMut(PointerEvent)>::new(move |event: PointerEvent| {
@@ -468,6 +659,9 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
                     let Some(input) = knob.query_selector(".knob-input").ok().flatten() else {
                         return;
                     };
+                    if app.state.comparing && input.has_attribute("data-field") {
+                        return;
+                    }
                     let start_value = input
                         .dyn_ref::<HtmlInputElement>()
                         .map(|field| field.value_as_number())
@@ -480,6 +674,7 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
                         input,
                         start_y: f64::from(event.client_y()),
                         start_value,
+                        fine: event.shift_key(),
                     });
                 }
                 "pointermove" => {
@@ -488,7 +683,7 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
                         .as_ref()
                         .is_some_and(|drag| drag.pointer == event.pointer_id())
                     {
-                        app.drag_to(f64::from(event.client_y()), true);
+                        app.drag_to(f64::from(event.client_y()), event.shift_key(), true);
                     }
                 }
                 _ => {
@@ -499,7 +694,7 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
                     {
                         // Confirm the value the knob landed on, then let the
                         // page redraw around it.
-                        app.drag_to(f64::from(event.client_y()), false);
+                        app.drag_to(f64::from(event.client_y()), event.shift_key(), false);
                         app.drag = None;
                         app.pump();
                     }
@@ -519,16 +714,31 @@ pub fn start() -> Result<(), JsValue> {
         .document()
         .ok_or_else(|| JsValue::from_str("missing document"))?;
     let origin = window.location().origin()?;
+    // The page says which surface it is; the host's context confirms it.
+    let surface = document
+        .body()
+        .and_then(|body| body.get_attribute("data-surface"))
+        .unwrap_or_else(|| "play".to_owned());
+    let installed_grant = window
+        .local_storage()
+        .ok()
+        .flatten()
+        .and_then(|storage| storage.get_item(INSTALLED_GRANT_KEY).ok().flatten());
     let app: Shared = Rc::new(RefCell::new(App {
         window,
         document,
         origin,
-        state: State::default(),
+        state: State {
+            surface,
+            installed_grant,
+            ..State::default()
+        },
         client: Client::default(),
         rendered: Default::default(),
         last_poll: 0.0,
         info: None,
         drag: None,
+        installing: None,
     }));
     for kind in ["input", "change", "click"] {
         listen(&app, kind)?;
@@ -638,6 +848,41 @@ impl App {
             if !ok || !self.state.apply_parameters(result) {
                 self.state.status = "RackForge did not send the controls.".into();
             }
+        } else if key == "resources" {
+            if ok {
+                self.state.apply_resources(result);
+            }
+        } else if key == "bindings" {
+            if ok {
+                self.state.apply_grants(result);
+            }
+        } else if key == "choose" {
+            self.state.busy.clear();
+            match result["grant_id"].as_str() {
+                // The host answers a cancelled explorer with a status rather
+                // than a grant, and that is not a failure.
+                Some(grant) if ok => {
+                    let grant = grant.to_owned();
+                    self.install_grant(&grant);
+                }
+                _ if ok => self.state.notice = "No cartridge was chosen.".into(),
+                _ => self.state.notice = error.to_owned(),
+            }
+        } else if key == "install" || key == "clear" {
+            self.state.busy.clear();
+            let installing = self.installing.take();
+            self.state.notice = if ok {
+                self.last_poll = f64::NEG_INFINITY;
+                if key == "install" {
+                    self.remember_installed(installing);
+                    "Cartridge installed. Its voices are the programs now.".into()
+                } else {
+                    self.remember_installed(None);
+                    "Cartridge removed. RF-7 is playing its factory bank.".into()
+                }
+            } else {
+                error.to_owned()
+            };
         } else if key != "info" && !ok {
             self.state.status = error.to_owned();
         }

@@ -22,7 +22,7 @@ js-sys = "=0.3.104"
 web-sys = { version = "=0.3.104", features = [
     "Window", "Document", "Element", "Event", "EventTarget", "Node", "HtmlElement",
     "HtmlInputElement", "HtmlSelectElement", "Location", "MessageEvent", "NodeList",
-    "PointerEvent", "Performance",
+    "MouseEvent", "PointerEvent", "Performance", "Storage", "WheelEvent",
 ] }
 
 [lints]

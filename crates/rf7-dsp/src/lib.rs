@@ -21,7 +21,7 @@ pub use algorithm::{ALGORITHMS, Algorithm};
 pub use envelope::Envelope;
 pub use sine::Sine;
 pub use tables::{LEVEL_FULL, LEVEL_HEADROOM, modulation_index_at_level};
-pub use voice::{MODULATION_CYCLES, NoteVoice, Performance, VoiceSetup};
+pub use voice::{Glide, Key, MODULATION_CYCLES, NoteVoice, Performance, VoiceSetup};
 
 use lfo::Lfo;
 use rf7_voice::{Library, Voice, factory_library, printable_name};
@@ -57,6 +57,33 @@ pub const LFO_RATE_MIN: f32 = 0.25;
 pub const LFO_RATE_MAX: f32 = 4.0;
 pub const LFO_DEPTH_MAX: f32 = 1.0;
 pub const LFO_DELAY_MAX: f32 = 4.0;
+/// The portamento time, on the instrument's own 0..=99 dial.
+pub const PORTAMENTO_TIME_MAX: f32 = 99.0;
+/// How many keys a mono phrase can hold before the oldest is forgotten. The
+/// instrument tracks its whole keyboard; sixteen is as deep as any player
+/// reaches with ten fingers and a sustain pedal.
+pub const MONO_STACK: usize = 16;
+
+/// How the allocator hands out notes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VoiceMode {
+    /// Sixteen notes at once.
+    #[default]
+    Poly,
+    /// One note at a time, last-note priority: a key played over another
+    /// takes the voice without restarting its envelopes, and releasing it
+    /// hands the voice back to whichever key is still down.
+    Mono,
+}
+
+impl VoiceMode {
+    pub const fn from_index(index: u32) -> Self {
+        match index {
+            0 => Self::Poly,
+            _ => Self::Mono,
+        }
+    }
+}
 /// Every operator heard.
 pub const ALL_OPERATORS: u8 = (1 << OPERATORS) - 1;
 
@@ -68,21 +95,30 @@ pub const DEFAULT_GAIN: f64 = 0.3;
 pub const GAIN_MAX: f64 = 2.0;
 
 const CONTROL_MODULATION: u8 = 1;
+const CONTROL_BREATH: u8 = 2;
+const CONTROL_FOOT: u8 = 4;
+const CONTROL_VOLUME: u8 = 7;
+const CONTROL_EXPRESSION: u8 = 11;
 const CONTROL_SUSTAIN: u8 = 64;
+const CONTROL_PORTAMENTO: u8 = 65;
 const CONTROL_ALL_SOUND_OFF: u8 = 120;
 const CONTROL_ALL_NOTES_OFF: u8 = 123;
 
-/// What a wheel or a pressure sensor is wired to.
+/// What a wheel, a pressure sensor, a breath controller or a pedal is wired
+/// to.
 ///
 /// The DX7 assigns each of its controllers to pitch, amplitude or the envelope
-/// bias, independently. RF-7 offers the first two, which is what the wheel is
-/// used for in practice.
+/// bias, independently. The first two are vibrato and tremolo through the LFO;
+/// the third is what a breath controller is for: the operators that answer to
+/// amplitude modulation sit below their programmed level while the controller
+/// rests, and come up to it as the controller travels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Target {
     #[default]
     Pitch,
     Amplitude,
     Both,
+    Bias,
 }
 
 impl Target {
@@ -91,6 +127,7 @@ impl Target {
         match index {
             1 => Self::Amplitude,
             2 => Self::Both,
+            3 => Self::Bias,
             _ => Self::Pitch,
         }
     }
@@ -100,7 +137,12 @@ impl Target {
             Self::Pitch => 0,
             Self::Amplitude => 1,
             Self::Both => 2,
+            Self::Bias => 3,
         }
+    }
+
+    const fn moves_bias(self) -> bool {
+        matches!(self, Self::Bias)
     }
 
     const fn moves_pitch(self) -> bool {
@@ -130,6 +172,14 @@ pub struct Controls {
     pub wheel_target: Target,
     pub aftertouch_range: f32,
     pub aftertouch_target: Target,
+    /// The breath controller (controller 2) and the foot controller
+    /// (controller 4), each with a reach and a destination of its own like
+    /// the wheel. Both reaches rest at zero, so the program plays as written
+    /// until one is opened.
+    pub breath_range: f32,
+    pub breath_target: Target,
+    pub foot_range: f32,
+    pub foot_target: Target,
     /// Scales the modulation depth of every operator. 1.0 is the patch's own.
     pub brightness: f32,
     pub envelope_time: f32,
@@ -141,6 +191,9 @@ pub struct Controls {
     pub lfo_depth: f32,
     /// Seconds added to the program's LFO delay. 0.0 adds none.
     pub lfo_delay: f32,
+    pub voice_mode: VoiceMode,
+    /// The instrument's portamento dial, 0..=99. Zero is no glide.
+    pub portamento_time: f32,
     /// Bit `i` set means OP(i+1) is heard.
     pub operators: u8,
 }
@@ -155,12 +208,18 @@ impl Default for Controls {
             wheel_target: Target::Pitch,
             aftertouch_range: 0.0,
             aftertouch_target: Target::Pitch,
+            breath_range: 0.0,
+            breath_target: Target::Bias,
+            foot_range: 0.0,
+            foot_target: Target::Bias,
             brightness: 1.0,
             envelope_time: 1.0,
             velocity_depth: 1.0,
             lfo_rate: 1.0,
             lfo_depth: 0.0,
             lfo_delay: 0.0,
+            voice_mode: VoiceMode::Poly,
+            portamento_time: 0.0,
             operators: ALL_OPERATORS,
         }
     }
@@ -189,6 +248,8 @@ impl Controls {
             transpose: self.transpose.clamp(-TRANSPOSE_MAX, TRANSPOSE_MAX),
             wheel_range: finite(self.wheel_range, 0.0, 1.0, 1.0),
             aftertouch_range: finite(self.aftertouch_range, 0.0, 1.0, 0.0),
+            breath_range: finite(self.breath_range, 0.0, 1.0, 0.0),
+            foot_range: finite(self.foot_range, 0.0, 1.0, 0.0),
             brightness: finite(self.brightness, 0.0, BRIGHTNESS_MAX, 1.0),
             envelope_time: finite(
                 self.envelope_time,
@@ -200,6 +261,7 @@ impl Controls {
             lfo_rate: finite(self.lfo_rate, LFO_RATE_MIN, LFO_RATE_MAX, 1.0),
             lfo_depth: finite(self.lfo_depth, 0.0, LFO_DEPTH_MAX, 0.0),
             lfo_delay: finite(self.lfo_delay, 0.0, LFO_DELAY_MAX, 0.0),
+            portamento_time: finite(self.portamento_time, 0.0, PORTAMENTO_TIME_MAX, 0.0),
             operators: self.operators & ALL_OPERATORS,
             ..self
         }
@@ -251,6 +313,14 @@ pub struct Engine {
     wheel: f32,
     /// Channel pressure, 0.0..=1.0.
     pressure: f32,
+    /// Breath controller and foot controller, 0.0..=1.0 each.
+    breath: f32,
+    foot: f32,
+    /// Channel volume (controller 7) and expression (controller 11), both
+    /// full until a message says otherwise. They are levels, not positions,
+    /// so a reset leaves them where the keyboard put them.
+    volume: f32,
+    expression: f32,
     /// One bit per MIDI channel.
     pedals: u16,
     /// Semitones of LFO pitch modulation at full depth.
@@ -259,7 +329,19 @@ pub struct Engine {
     amp_depth: f32,
     /// Notes that arrived with every voice already busy.
     stolen: u64,
+    /// The keys a mono phrase is holding, oldest first. The last of them is
+    /// the one that sounds.
+    keys: [(u8, u8); MONO_STACK],
+    key_count: usize,
+    /// The note a glide starts from: whatever was played last.
+    last_note: Option<u8>,
+    /// The portamento switch, controller 65. On unless a pedal says otherwise.
+    portamento_switch: bool,
 }
+
+/// A mono phrase always sounds on the same voice, so a line never stacks the
+/// release tails of the notes it has left behind.
+const MONO_SLOT: usize = 0;
 
 impl Engine {
     pub fn new(sample_rate: f32) -> Result<Self, EngineError> {
@@ -282,10 +364,18 @@ impl Engine {
             bend_position: 0.0,
             wheel: 0.0,
             pressure: 0.0,
+            breath: 0.0,
+            foot: 0.0,
+            volume: 1.0,
+            expression: 1.0,
             pedals: 0,
             pitch_depth: 0.0,
             amp_depth: 0.0,
             stolen: 0,
+            keys: [(0, 0); MONO_STACK],
+            key_count: 0,
+            last_note: None,
+            portamento_switch: true,
         };
         engine.apply_patch();
         Ok(engine)
@@ -410,21 +500,48 @@ impl Engine {
             // phrase, not to every key in it.
             self.lfo.key_down();
         }
-        let slot = self.allocate();
-        let setup = self.controls.setup();
-        self.voices[slot].start(
-            &self.patch,
-            channel,
-            note,
-            velocity,
-            &setup,
-            self.sample_rate,
-        );
-        self.sustained[slot] = false;
+        match self.controls.voice_mode {
+            VoiceMode::Poly => {
+                let slot = self.allocate();
+                self.start(slot, channel, note, velocity);
+            }
+            VoiceMode::Mono => {
+                // A key played while another is still down takes the voice
+                // without starting it again: on the instrument a legato note
+                // does not retrigger its envelopes.
+                let legato = self.push_key(note, velocity)
+                    && self.voices[MONO_SLOT].is_active()
+                    && self.voices[MONO_SLOT].is_held();
+                if legato {
+                    self.retune(note);
+                } else {
+                    self.start(MONO_SLOT, channel, note, velocity);
+                }
+            }
+        }
+        self.last_note = Some(note);
     }
 
     pub fn note_off(&mut self, channel: u8, note: u8) {
         let held = self.pedals & (1 << (channel & 15)) != 0;
+        if self.controls.voice_mode == VoiceMode::Mono {
+            if !self.remove_key(note) {
+                return;
+            }
+            match self.keys[..self.key_count].last().copied() {
+                // A key is still down: the voice goes back to it, again
+                // without starting over.
+                Some((held_note, _)) => self.retune(held_note),
+                None => {
+                    if held {
+                        self.sustained[MONO_SLOT] = true;
+                    } else {
+                        self.voices[MONO_SLOT].release();
+                    }
+                }
+            }
+            return;
+        }
         for (slot, voice) in self.voices.iter_mut().enumerate() {
             if voice.is_active()
                 && voice.is_held()
@@ -440,12 +557,92 @@ impl Engine {
         }
     }
 
+    /// Start a note in a slot, gliding from whatever was played before it.
+    fn start(&mut self, slot: usize, channel: u8, note: u8, velocity: u8) {
+        let setup = self.controls.setup();
+        let glide = self.glide();
+        self.voices[slot].start(
+            &self.patch,
+            Key {
+                channel,
+                note,
+                velocity,
+            },
+            &setup,
+            self.sample_rate,
+            glide,
+        );
+        self.sustained[slot] = false;
+    }
+
+    /// Send the mono voice to another note, keeping its envelopes.
+    fn retune(&mut self, note: u8) {
+        let setup = self.controls.setup();
+        let glide = self.glide();
+        self.voices[MONO_SLOT].retune(&self.patch, note, &setup, self.sample_rate, glide);
+        self.sustained[MONO_SLOT] = false;
+    }
+
+    /// Where a new note starts from and how fast it arrives. A portamento
+    /// time of zero is no glide at all, so the instrument plays as it always
+    /// has until the dial is moved; the switch on controller 65 turns off a
+    /// glide that is set.
+    fn glide(&self) -> Glide {
+        let time = self.controls.portamento_time.round().clamp(0.0, 99.0) as u8;
+        let gliding = self.portamento_switch && time > 0;
+        Glide {
+            from: self.last_note.filter(|_| gliding),
+            semitones_per_second: if gliding {
+                tables::portamento_semitones_per_second(time)
+            } else {
+                0.0
+            },
+        }
+    }
+
+    /// Remember a held key. Returns whether another was already down, which
+    /// is what makes the new note legato.
+    fn push_key(&mut self, note: u8, velocity: u8) -> bool {
+        let legato = self.key_count > 0;
+        self.forget_key(note);
+        if self.key_count == MONO_STACK {
+            self.keys.copy_within(1.., 0);
+            self.key_count -= 1;
+        }
+        self.keys[self.key_count] = (note, velocity);
+        self.key_count += 1;
+        legato
+    }
+
+    /// Release a held key. Returns whether it was the one sounding.
+    fn remove_key(&mut self, note: u8) -> bool {
+        let sounding = self.keys[..self.key_count]
+            .last()
+            .is_some_and(|(held, _)| *held == note);
+        self.forget_key(note);
+        sounding
+    }
+
+    fn forget_key(&mut self, note: u8) {
+        if let Some(index) = self.keys[..self.key_count]
+            .iter()
+            .position(|(held, _)| *held == note)
+        {
+            self.keys.copy_within(index + 1..self.key_count, index);
+            self.key_count -= 1;
+        }
+    }
+
     /// `value` is normalised to 0.0..=1.0 by the caller, which is what lets a
     /// seven-bit controller and a thirty-two-bit one arrive the same way.
     pub fn control_change(&mut self, channel: u8, controller: u8, value: f64) {
         let value = value.clamp(0.0, 1.0);
         match controller {
             CONTROL_MODULATION => self.wheel = value as f32,
+            CONTROL_BREATH => self.breath = value as f32,
+            CONTROL_FOOT => self.foot = value as f32,
+            CONTROL_VOLUME => self.volume = value as f32,
+            CONTROL_EXPRESSION => self.expression = value as f32,
             CONTROL_SUSTAIN => {
                 let bit = 1 << (channel & 15);
                 if value >= 0.5 {
@@ -460,7 +657,9 @@ impl Engine {
                     }
                 }
             }
+            CONTROL_PORTAMENTO => self.portamento_switch = value >= 0.5,
             CONTROL_ALL_NOTES_OFF => {
+                self.key_count = 0;
                 for (slot, voice) in self.voices.iter_mut().enumerate() {
                     voice.release();
                     self.sustained[slot] = false;
@@ -492,7 +691,11 @@ impl Engine {
         self.bend_position = 0.0;
         self.wheel = 0.0;
         self.pressure = 0.0;
+        self.breath = 0.0;
+        self.foot = 0.0;
         self.stolen = 0;
+        self.key_count = 0;
+        self.last_note = None;
         self.lfo = Lfo::new(&self.patch.lfo, self.sample_rate);
         self.retune_lfo();
     }
@@ -503,21 +706,34 @@ impl Engine {
 
     pub fn next_sample(&mut self) -> f32 {
         let modulation = self.lfo.advance();
-        // Both controllers open the same two destinations, so they are summed
+        // Every controller opens the same destinations, so they are summed
         // per destination rather than each fighting for the whole depth.
-        let wheel = self.wheel * self.controls.wheel_range;
-        let pressure = self.pressure * self.controls.aftertouch_range;
+        let controls = &self.controls;
         let mut added_pitch = 0.0;
         let mut added_amplitude = 0.0;
-        for (amount, target) in [
-            (wheel, self.controls.wheel_target),
-            (pressure, self.controls.aftertouch_target),
+        let mut bias = 0.0;
+        for (position, range, target) in [
+            (self.wheel, controls.wheel_range, controls.wheel_target),
+            (
+                self.pressure,
+                controls.aftertouch_range,
+                controls.aftertouch_target,
+            ),
+            (self.breath, controls.breath_range, controls.breath_target),
+            (self.foot, controls.foot_range, controls.foot_target),
         ] {
+            let amount = position * range;
             if target.moves_pitch() {
                 added_pitch += amount;
             }
             if target.moves_amplitude() {
                 added_amplitude += amount;
+            }
+            // The bias is what the controller has not yet given back: at rest
+            // the operators sit the whole reach below their level, and at full
+            // travel they are where the program put them.
+            if target.moves_bias() {
+                bias += range - amount;
             }
         }
         let pitch_depth = (f32::from(self.patch.lfo.pitch_mod_depth.min(99)) / 99.0
@@ -532,6 +748,7 @@ impl Engine {
             // Amplitude modulation only ever takes level away, so the LFO is
             // read as a unipolar dip rather than a swing either side of it.
             amplitude: amplitude_depth * (1.0 - modulation) * 0.5,
+            bias: bias.min(1.0),
             modulation: MODULATION_CYCLES * self.controls.brightness,
             operators: self.controls.operators,
         };
@@ -539,7 +756,7 @@ impl Engine {
         for voice in &mut self.voices {
             sum += voice.next_sample(&self.sine, &performance);
         }
-        sum * self.gain as f32
+        sum * self.gain as f32 * self.volume * self.expression
     }
 
     /// The slot a new note should take: a free one, else the oldest released
@@ -927,6 +1144,83 @@ mod tests {
     }
 
     #[test]
+    fn the_breath_controller_lifts_the_envelope_bias_as_it_is_blown() {
+        // The bias reaches the operators through the same sensitivity as the
+        // amplitude modulation, which no factory voice sets.
+        let mut voice = Voice::init();
+        voice.operators[0].amp_mod_sensitivity = 3;
+        let library = rf7_voice::Library::from_voices(&[voice]);
+        let level_at = |breath: f64| {
+            let mut engine = engine_with(Controls {
+                breath_range: 1.0,
+                breath_target: Target::Bias,
+                ..Controls::default()
+            });
+            engine.load_library(library.clone());
+            engine.control_change(0, CONTROL_BREATH, breath);
+            engine.note_on(0, 60, 100);
+            rms(&render(&mut engine, 12_000))
+        };
+        let rest = level_at(0.0);
+        let half = level_at(0.5);
+        let full = level_at(1.0);
+        assert!(rest < half && half < full, "{rest} {half} {full}");
+        // Full travel gives the program back exactly as written, and a closed
+        // reach leaves the controller nothing to move.
+        let mut untouched = engine();
+        untouched.load_library(library.clone());
+        untouched.note_on(0, 60, 100);
+        let plain = rms(&render(&mut untouched, 12_000));
+        assert!((full - plain).abs() < 1e-5, "{full} {plain}");
+        let mut closed_reach = engine();
+        closed_reach.load_library(library);
+        closed_reach.control_change(0, CONTROL_BREATH, 0.0);
+        closed_reach.note_on(0, 60, 100);
+        let closed = rms(&render(&mut closed_reach, 12_000));
+        assert!((closed - plain).abs() < 1e-5, "{closed} {plain}");
+        assert_eq!(Target::from_index(Target::Bias.index()), Target::Bias);
+    }
+
+    #[test]
+    fn the_foot_controller_is_a_controller_of_its_own() {
+        let mut voice = Voice::init();
+        voice.pitch_mod_sensitivity = 7;
+        let library = rf7_voice::Library::from_voices(&[voice]);
+        let sounded = |controller: u8| {
+            let mut engine = engine_with(Controls {
+                foot_range: 1.0,
+                foot_target: Target::Pitch,
+                ..Controls::default()
+            });
+            engine.load_library(library.clone());
+            engine.control_change(0, controller, 1.0);
+            engine.note_on(0, 60, 100);
+            render(&mut engine, 24_000)
+        };
+        assert_ne!(
+            sounded(CONTROL_FOOT),
+            sounded(CONTROL_BREATH),
+            "only the foot controller is wired to pitch here"
+        );
+    }
+
+    #[test]
+    fn volume_and_expression_scale_the_output_and_survive_a_reset() {
+        let mut turned_down = engine();
+        turned_down.select_program(0);
+        turned_down.control_change(0, CONTROL_VOLUME, 0.5);
+        turned_down.control_change(0, CONTROL_EXPRESSION, 0.5);
+        turned_down.reset();
+        turned_down.note_on(0, 60, 100);
+        let scaled = peak(&render(&mut turned_down, 12_000));
+        let mut untouched = engine();
+        untouched.select_program(0);
+        untouched.note_on(0, 60, 100);
+        let plain = peak(&render(&mut untouched, 12_000));
+        assert!((scaled - plain * 0.25).abs() < 1e-5, "{scaled} vs {plain}");
+    }
+
+    #[test]
     fn brightness_and_the_operator_switches_reach_the_output() {
         let sounded = |controls: Controls| {
             let mut engine = engine_with(controls);
@@ -1038,6 +1332,236 @@ mod tests {
             "without the delay it starts at once"
         );
         assert!(difference(&plain, &delayed) > 0.0, "and it does arrive");
+    }
+
+    /// An organ holds its level, so a rendered window can be read for pitch
+    /// without the envelope moving under it.
+    fn sustaining(controls: Controls) -> Engine {
+        let mut engine = engine();
+        engine.load_patch(rf7_voice::factory_voice(6));
+        engine.set_controls(controls);
+        engine
+    }
+
+    fn mono(portamento_time: f32) -> Engine {
+        sustaining(Controls {
+            voice_mode: VoiceMode::Mono,
+            portamento_time,
+            ..Controls::default()
+        })
+    }
+
+    /// The rendered pitch of a window, in crossings per second.
+    fn pitch(engine: &mut Engine, samples: usize) -> f32 {
+        let rendered = render(engine, samples);
+        crossings(&rendered) as f32 * 48_000.0 / samples as f32
+    }
+
+    #[test]
+    fn mono_holds_one_voice_and_follows_the_last_key_down() {
+        let mut engine = mono(0.0);
+        engine.note_on(0, 60, 100);
+        let middle = pitch(&mut engine, 12_000);
+        assert_eq!(engine.active_voices(), 1);
+
+        // A key played over the first takes the voice rather than adding one.
+        engine.note_on(0, 72, 100);
+        let above = pitch(&mut engine, 12_000);
+        assert_eq!(engine.active_voices(), 1, "mono never sounds two notes");
+        assert!(
+            (above / middle - 2.0).abs() < 0.1,
+            "an octave up read as {above} against {middle}"
+        );
+
+        // Releasing it hands the voice back to the key still down.
+        engine.note_off(0, 72);
+        let back = pitch(&mut engine, 12_000);
+        assert_eq!(engine.active_voices(), 1);
+        assert!(
+            (back / middle - 1.0).abs() < 0.05,
+            "the voice did not return to the held key: {back} against {middle}"
+        );
+
+        // And releasing the last key ends the note.
+        engine.note_off(0, 60);
+        render(&mut engine, 48_000);
+        assert_eq!(engine.active_voices(), 0);
+    }
+
+    #[test]
+    fn a_legato_note_does_not_start_the_envelopes_again() {
+        // A struck voice is the one that shows it: its attack is loud and
+        // its body is not.
+        let mut engine = mono(0.0);
+        engine.load_patch(rf7_voice::factory_voice(0));
+        engine.note_on(0, 60, 100);
+        let attack = peak(&render(&mut engine, 2_400));
+        let body = peak(&render(&mut engine, 12_000));
+        assert!(
+            body < attack * 0.9,
+            "the voice does not decay enough to tell"
+        );
+
+        // Held: the second note carries on from where the first was.
+        engine.note_on(0, 64, 100);
+        let legato = peak(&render(&mut engine, 2_400));
+        assert!(
+            legato < attack * 0.9,
+            "a legato note struck again: {legato} against an attack of {attack}"
+        );
+
+        // Released first: the second note is a new one, and strikes.
+        engine.note_off(0, 64);
+        engine.note_off(0, 60);
+        render(&mut engine, 48_000);
+        engine.note_on(0, 64, 100);
+        let struck = peak(&render(&mut engine, 2_400));
+        assert!(
+            struck > legato * 1.5,
+            "a note after a release did not strike: {struck} against {legato}"
+        );
+    }
+
+    #[test]
+    fn portamento_slides_from_the_note_before_it_and_arrives() {
+        // Slow enough that an octave takes about a second.
+        let mut engine = mono(80.0);
+        engine.note_on(0, 60, 100);
+        let start = pitch(&mut engine, 12_000);
+        engine.note_on(0, 72, 100);
+        let sliding = pitch(&mut engine, 2_400);
+        // At a time of 80 the octave takes about half a second, so the glide
+        // is given a second before it is asked whether it arrived.
+        render(&mut engine, 48_000);
+        let arrived = pitch(&mut engine, 12_000);
+        assert!(
+            sliding < start * 1.4,
+            "the glide jumped straight there: {sliding} against {start}"
+        );
+        assert!(
+            (arrived / start - 2.0).abs() < 0.15,
+            "the glide did not arrive: {arrived} against {start}"
+        );
+
+        // The switch on controller 65 turns it off, and then a note is where
+        // it was played.
+        let mut engine = mono(80.0);
+        engine.note_on(0, 60, 100);
+        let start = pitch(&mut engine, 12_000);
+        engine.control_change(0, 65, 0.0);
+        engine.note_on(0, 72, 100);
+        let immediate = pitch(&mut engine, 2_400);
+        assert!(
+            (immediate / start - 2.0).abs() < 0.15,
+            "the switch did not stop the glide: {immediate} against {start}"
+        );
+
+        // And a time of zero is the instrument as it was: no glide at all.
+        let mut engine = mono(0.0);
+        engine.note_on(0, 60, 100);
+        let start = pitch(&mut engine, 12_000);
+        engine.note_on(0, 72, 100);
+        let immediate = pitch(&mut engine, 2_400);
+        assert!((immediate / start - 2.0).abs() < 0.15);
+    }
+
+    #[test]
+    fn portamento_glides_in_poly_too_and_a_glide_survives_the_stack() {
+        let mut engine = sustaining(Controls {
+            portamento_time: 80.0,
+            ..Controls::default()
+        });
+        engine.note_on(0, 60, 100);
+        let start = pitch(&mut engine, 12_000);
+        engine.note_off(0, 60);
+        render(&mut engine, 24_000);
+        engine.note_on(0, 72, 100);
+        let sliding = pitch(&mut engine, 2_400);
+        assert!(
+            sliding < start * 1.4,
+            "a poly note did not glide from the one before it: {sliding} against {start}"
+        );
+
+        // The mono key stack is bounded, and the oldest key is the one that
+        // goes when it overflows.
+        let mut engine = mono(0.0);
+        for note in 40..40 + MONO_STACK as u8 + 4 {
+            engine.note_on(0, note, 100);
+        }
+        assert_eq!(engine.active_voices(), 1);
+        for note in 40..40 + MONO_STACK as u8 + 3 {
+            engine.note_off(0, note);
+        }
+        render(&mut engine, 4_800);
+        assert_eq!(engine.active_voices(), 1, "the last key still holds it");
+        engine.note_off(0, 40 + MONO_STACK as u8 + 3);
+        render(&mut engine, 48_000);
+        assert_eq!(engine.active_voices(), 0);
+    }
+
+    /// The loudest the attack gets, and what is left of it a second later
+    /// while the key is still down.
+    fn attack_and_body(name: &str) -> (f32, f32) {
+        let index = (0..FACTORY_VOICES)
+            .find(|index| rf7_voice::printable_name(&rf7_voice::factory_voice(*index).name) == name)
+            .unwrap_or_else(|| panic!("the bank has no {name}"));
+        let mut engine = engine();
+        engine.load_patch(rf7_voice::factory_voice(index));
+        engine.note_on(0, 60, 100);
+        let attack = peak(&render(&mut engine, 24_000));
+        let body = peak(&render(&mut engine, 24_000));
+        let db = |value: f32| 20.0 * value.max(1e-9).log10();
+        (db(attack), db(body))
+    }
+
+    /// A voice that is meant to hold a note has to hold it.
+    ///
+    /// Every sustained voice in the bank was once written to attack to 99 and
+    /// then settle a long way under it, which is heard as a crescendo that
+    /// breaks and drops away. The instrument's own cartridges do not do that:
+    /// BRASS 1 falls 3, 1, 1, 1 and 7 points from its peak to the level it
+    /// holds, PIPES 1 falls 1, 9, 9, 2, 6, 0. This is the shape those voices
+    /// were reshaped to, and it is asserted so it cannot drift back.
+    #[test]
+    fn the_voices_that_should_hold_a_note_hold_it_and_the_struck_ones_do_not() {
+        for name in [
+            "RF BRASS",
+            "RF ORGAN",
+            "RF HORNS",
+            "RF TRUMPET",
+            "RF SAX",
+            "RF STRINGS",
+            "RF PAD",
+            "RF CHOIR",
+            "RF DRAWBAR",
+            "RF PIPE",
+            "RF LEAD",
+            "RF SQUARE",
+            "RF SUB",
+        ] {
+            let (attack, body) = attack_and_body(name);
+            // The bank that this replaced fell 8 to 15 dB on four of these,
+            // and BRASS 1 on the instrument's own cartridge falls under one.
+            assert!(
+                body >= attack - 7.0,
+                "{name} swells and then collapses: {attack:.1} dB to {body:.1} dB"
+            );
+        }
+        for name in [
+            "RF TINES",
+            "RF MARIMBA",
+            "RF WOOD",
+            "RF PIANO",
+            "RF CLAV",
+            "RF HARPSI",
+            "RF KOTO",
+        ] {
+            let (attack, body) = attack_and_body(name);
+            assert!(
+                body <= attack - 20.0,
+                "{name} is struck and should decay: {attack:.1} dB to {body:.1} dB"
+            );
+        }
     }
 
     #[test]

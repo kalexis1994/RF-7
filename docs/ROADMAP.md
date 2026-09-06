@@ -1,5 +1,83 @@
 # Roadmap
 
+## 0.4.0 — done
+
+- Portamento and a mono voice mode, both from the instrument's own
+  behaviour. Mono has last-note priority and holds one voice, so a line
+  never stacks the release tails of the notes it has left behind; a legato
+  note takes that voice without starting its envelopes again, which is what
+  the hardware does. The glide reads the firmware's own rate table and its
+  `((distance >> 10) + 1) × rate` step, so it is a straight line in the
+  logarithmic pitch domain that gains a step of speed for every octave still
+  to cross. Portamento works in poly as well, gliding from the note played
+  before, and controller 65 switches it. The one inferred number is the
+  update rate the hardware glides at; [the ledger](MODEL.md) says so.
+- The sustained voices hold their note. Every one of them had been written
+  to attack to 99 and then settle a long way under it, which is heard as a
+  crescendo that breaks and drops away — the brass fell 8 dB from its peak to
+  its body, the horns 15, the saxophone 12. The instrument's own cartridges
+  do not do that: BRASS 1 falls 3, 1, 1, 1 and 7 points from its peak to the
+  level it holds, PIPES 1 falls 1, 9, 9, 2, 6, 0, OBOE 10, 0, 19, 4, 0, 0.
+  The carriers of the eight sustained voices now hold within five points of
+  their peak; the modulators keep the fall they had, because that fall is the
+  timbre easing back and it is what put the body's brightness beside the
+  instrument's. Brass now falls 3.6 dB, horns 5.0, saxophone 4.3, and the
+  body's spectral centroid is 1759 Hz against BRASS 1's 1570 — where holding
+  the modulators too had put it at 3584. A test renders every voice and
+  asserts which ones hold and which ones decay.
+- The instrument's two other controllers. A breath controller and a foot
+  controller each have a reach and a destination of their own, and every
+  controller now reaches the third destination the DX7 offered: the envelope
+  bias, which holds the sensitive operators under their level until the
+  player brings them up — what a breath controller is for, and what a swell
+  pedal does on the brass. Channel volume and expression scale the output, so
+  a keyboard's volume slider and pedal do what they do everywhere else. A
+  program change past the library's last slot reaches the saved programs in
+  catalog order, so a controller can call up a program written in the editor.
+- COMPARE on the head rail: the program as it opened plays for as long as
+  the key is down, its values on the knobs, and the edit is untouched
+  underneath. It uses the host's own transient previews and its restore, so
+  nothing is written to the draft to hear the difference. The display shows
+  the number an open program came from instead of ED, and a saved program
+  as U and its number. SETUP names the installed cartridge — the host says
+  only that one is installed, so the surface remembers which grant it put
+  there — and lights that pad.
+- The leads hold too. LEAD, SQUARE and SUB had the same fall as the brass —
+  12, 8 and 14 dB from the peak to the body — and the instrument's own
+  SYN-LEAD 2, 3 and 4 hold their note within a decibel. Their carriers now
+  stay within five points of their peak, the modulators keep their fall, and
+  the lead's four carriers sit a step apart instead of six, so the chorus
+  swings 6 dB over a held note instead of 8. The hold test covers them.
+- The brass family rebuilt on the instrument's own architecture. Holding
+  the old voices' bodies had not made them brass: every operator sat at 1:1
+  attacking together and falling together, which measured as a bright spit
+  over a dull body — the trumpet read 1238 Hz over the attack and 329 over
+  the body, where the instrument's solo brass reads 141 over 554. The
+  cartridges and Yamaha's programming notes agree on the recipe: ensemble
+  brass is algorithm 22 with a 1:1 feedback modulator blooming in behind
+  three detuned 1:1 carriers and a sub-octave pair; solo brass is one carrier
+  over a feedback core, an attack that spits and dies, an inharmonic bite
+  under velocity and a fixed flutter, with a pitch scoop and a delayed
+  vibrato. RF BRASS, RF HORNS and RF TRUMPET are written that way with their
+  own numbers, tuned until their attack and body brightness sat beside BRASS
+  1, 7 and 3, and the ensemble's chorus swing was measured against the
+  instrument's before its carriers were staggered to match it.
+- The knobs answer the way a player expects: Shift for a tenth of the
+  travel, rebased mid-drag so the key can be pressed at any moment; the wheel
+  for a notch, a step with Shift; a double-click to send a parameter to its
+  default or a voice field to where the program opened. Each operator card
+  carries its own ON key — the same switch the PERFORM page and a controller
+  see — so muting one no longer means leaving the editor. EDIT stays on the
+  rail with its lamp lit while a program is open, instead of vanishing.
+- A SETUP surface, so a cartridge can be installed from inside RackForge.
+  Until now the plugin declared the resource but offered no way to fill it:
+  the only way in was to put the file in the host's data folder by hand. The
+  host owns the explorer, the permission and the copy; the surface names the
+  resource and reads back what is installed.
+- The laboratory builds the WASM component itself before packaging, so a
+  package can no longer be validated against the component of an earlier
+  edit — which had just happened once, silently.
+
 ## 0.3.0 — done
 
 - RF-7's own front panel: a PLAY surface drawn inside RackForge on every
@@ -151,10 +229,6 @@
 
 ## Then
 
-- Portamento and a mono/legato voice mode. Both are real DX7 controls and both
-  need genuine work in the allocator: last-note priority, a glide in the
-  logarithmic frequency domain, and a decision about whether a legato note
-  retriggers its envelopes, which on the instrument it does not.
 - A ZIP import container, so a folder of `.syx` files can be installed in one
   step instead of one cartridge at a time.
 - `parallel_render_v1`: sixteen voices split cleanly across audio workers, and
