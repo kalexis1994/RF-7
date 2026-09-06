@@ -42,6 +42,10 @@
   as U and its number. SETUP names the installed cartridge — the host says
   only that one is installed, so the surface remembers which grant it put
   there — and lights that pad.
+- PERFORM laid out as the instrument's function layer: KEYBOARD for the
+  bend range, tuning, transpose, voice mode and portamento, and CONTROLLERS
+  as one row per controller with its reach and its destination side by side,
+  instead of thirteen controls in one plate.
 - The saxophone rebuilt on the instrument's own reed — algorithm 18, three
   half-ratio modulators under one carrier, one of them the feedback loop,
   a partial near 5.8:1 for the edge — after it measured as a bright spit

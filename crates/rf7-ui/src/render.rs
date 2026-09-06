@@ -841,20 +841,69 @@ fn page_perform(state: &State) -> String {
         if members.is_empty() {
             continue;
         }
-        let mut body = String::new();
-        for parameter in members {
-            body.push_str(&control(state, parameter));
-        }
         let colour = match page_id.as_str() {
             "output" => "red",
             "operators" => "amber",
             _ => "blue",
         };
+        // The performance page is the instrument's function layer: the
+        // keyboard's own settings, and one row per controller with its reach
+        // and its destination side by side.
+        if page_id == "performance" {
+            let is_controller = |p: &Parameter| {
+                CONTROLLERS.iter().any(|(prefix, _)| {
+                    p.id == format!("{prefix}_range") || p.id == format!("{prefix}_target")
+                })
+            };
+            let mut keyboard = String::new();
+            for parameter in members.iter().filter(|p| !is_controller(p)) {
+                keyboard.push_str(&control(state, parameter));
+            }
+            if !keyboard.is_empty() {
+                out.push_str(&group("keyboard", colour, "KEYBOARD", &keyboard));
+            }
+            let mut rows = String::new();
+            for (prefix, name) in CONTROLLERS {
+                let range = members.iter().find(|p| p.id == format!("{prefix}_range"));
+                let target = members.iter().find(|p| p.id == format!("{prefix}_target"));
+                if range.is_none() && target.is_none() {
+                    continue;
+                }
+                let _ = write!(
+                    rows,
+                    "<div class=\"ctl-row\"><span class=\"ctl-name\">{name}</span>"
+                );
+                if let Some(range) = range {
+                    rows.push_str(&control_labelled(state, range, "RANGE"));
+                }
+                if let Some(target) = target {
+                    rows.push_str(&control_labelled(state, target, "TARGET"));
+                }
+                rows.push_str("</div>");
+            }
+            if !rows.is_empty() {
+                out.push_str(&group("controllers", colour, "CONTROLLERS", &rows));
+            }
+            continue;
+        }
+        let mut body = String::new();
+        for parameter in members {
+            body.push_str(&control(state, parameter));
+        }
         out.push_str(&group(&page_id, colour, &page_name.to_uppercase(), &body));
     }
     out.push_str("</div>");
     out
 }
+
+/// The instrument's four controllers, by the prefix of their two parameters
+/// and the name the row prints.
+const CONTROLLERS: [(&str, &str); 4] = [
+    ("wheel", "MOD WHEEL"),
+    ("aftertouch", "AFTERTOUCH"),
+    ("breath", "BREATH"),
+    ("foot", "FOOT CTRL"),
+];
 
 fn format_value(kind: &ParameterKind, value: f64) -> String {
     match kind {
@@ -881,15 +930,21 @@ fn format_value(kind: &ParameterKind, value: f64) -> String {
 }
 
 fn control(state: &State, parameter: &Parameter) -> String {
-    let value = state
-        .parameter_value(parameter.index)
-        .unwrap_or(parameter.value);
-    let binding = format!("data-param=\"{}\"", parameter.index);
     let label = parameter
         .name
         .strip_prefix("Operator ")
         .map(|n| format!("OP{n}"))
         .unwrap_or_else(|| parameter.name.to_uppercase());
+    control_labelled(state, parameter, &label)
+}
+
+/// A parameter's control under a label of the page's choosing; the title
+/// still carries the parameter's full name.
+fn control_labelled(state: &State, parameter: &Parameter, label: &str) -> String {
+    let value = state
+        .parameter_value(parameter.index)
+        .unwrap_or(parameter.value);
+    let binding = format!("data-param=\"{}\"", parameter.index);
     match &parameter.kind {
         ParameterKind::Float {
             minimum,
@@ -898,7 +953,7 @@ fn control(state: &State, parameter: &Parameter) -> String {
             ..
         } => knob_html(
             &binding,
-            &label,
+            label,
             &parameter.name,
             value,
             *minimum,
@@ -911,7 +966,7 @@ fn control(state: &State, parameter: &Parameter) -> String {
             minimum, maximum, ..
         } => knob_html(
             &binding,
-            &label,
+            label,
             &parameter.name,
             value.round(),
             *minimum as f64,
@@ -920,7 +975,7 @@ fn control(state: &State, parameter: &Parameter) -> String {
             &format_value(&parameter.kind, value),
             parameter.default,
         ),
-        ParameterKind::Boolean => switch_html(&binding, &label, &parameter.name, value >= 0.5),
+        ParameterKind::Boolean => switch_html(&binding, label, &parameter.name, value >= 0.5),
         ParameterKind::Enum { choices } => {
             let options: Vec<(String, String)> = choices
                 .iter()
@@ -928,7 +983,7 @@ fn control(state: &State, parameter: &Parameter) -> String {
                 .collect();
             segment_html(
                 &binding,
-                &label,
+                label,
                 &options,
                 &format!("{}", value.round() as i64),
             )
@@ -1212,9 +1267,13 @@ mod tests {
                  "kind": {"type": "float", "minimum": 0.0, "maximum": 2.0, "default": 0.3, "step": 0.01, "unit": "x"}},
                 {"index": 11, "id": "operator_1", "name": "Operator 1", "page": "operators", "kind": {"type": "boolean", "default": true}},
                 {"index": 5, "id": "wheel_target", "name": "Mod Wheel Target", "page": "performance",
-                 "kind": {"type": "enum", "default": 0, "choices": [{"value": 0, "name": "Pitch"}, {"value": 1, "name": "Amplitude"}]}}
+                 "kind": {"type": "enum", "default": 0, "choices": [{"value": 0, "name": "Pitch"}, {"value": 1, "name": "Amplitude"}]}},
+                {"index": 21, "id": "portamento_time", "name": "Portamento", "page": "performance",
+                 "kind": {"type": "integer", "minimum": 0, "maximum": 99, "default": 0, "step": 1}},
+                {"index": 30, "id": "extra_one", "name": "Extra One", "page": "extra",
+                 "kind": {"type": "integer", "minimum": 0, "maximum": 9, "default": 0, "step": 1}}
             ]},
-            "values": [{"index": 0, "value": 0.3}, {"index": 11, "value": 1.0}, {"index": 5, "value": 1.0}]
+            "values": [{"index": 0, "value": 0.3}, {"index": 11, "value": 1.0}, {"index": 5, "value": 1.0}, {"index": 21, "value": 0.0}, {"index": 30, "value": 0.0}]
         }));
         let html = page(&state);
         assert!(html.contains("<h2>OUTPUT</h2>"));
@@ -1224,8 +1283,17 @@ mod tests {
         assert!(html.contains("<output>0.30x</output>"));
         assert!(html.contains("aria-checked=\"true\" data-param=\"11\""));
         assert!(html.contains("data-param=\"5\" data-value=\"1\" aria-pressed=\"true\">AMP<"));
+        // The performance page is laid out by hand: the keyboard's own
+        // settings, then one row per controller.
+        assert!(html.contains("<h2>KEYBOARD</h2>"));
+        assert!(html.contains("<h2>CONTROLLERS</h2>"));
+        assert!(html.contains("<span class=\"ctl-name\">MOD WHEEL</span>"));
         assert!(
-            html.contains("<h2>PERFORMANCE</h2>"),
+            !html.contains("AFTERTOUCH"),
+            "a controller the schema lacks has no row"
+        );
+        assert!(
+            html.contains("<h2>EXTRA</h2>"),
             "an unlisted page still prints"
         );
     }

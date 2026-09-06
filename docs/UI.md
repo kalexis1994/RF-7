@@ -78,10 +78,13 @@ frequency group with its FIXED key, and keyboard scaling with the two curve
 key rows. A carrier is amber, from its top edge to the trace on its screen to
 the cap of its knobs; a modulator is blue.
 
-**PERFORM** — the seventeen public parameters, grouped as the plugin's own
+**PERFORM** — the twenty-six public parameters, grouped as the plugin's own
 schema groups them, so a parameter added to the plugin appears here without a
-change to the panel. These are the same controls the LITTLE surface and MIDI
-links see.
+change to the panel. The performance page is laid out as the instrument's
+function layer: KEYBOARD for bend range, tuning, transpose, the voice mode
+and portamento, and CONTROLLERS as one row per controller — mod wheel,
+aftertouch, breath, foot — with its reach and its destination side by side.
+These are the same controls the LITTLE surface and MIDI links see.
 
 **PROGRAMS** — the library's banks and then YOUR PROGRAMS, as pads. One press
 plays a program. While a program is open for editing the pads are dark: the
