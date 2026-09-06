@@ -51,6 +51,16 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- The pianos measured against a real one. With the envelope clock right,
+  RF PIANO, RF GRAND and RF UPRIGHT were read beside the Salamander grand
+  at four registers and two dynamics, and rebuilt around what the recording
+  shows: a first fall that deepens with pitch, from six decibels at A0 to
+  thirty-five at C6, over a tail of two to three decibels a second
+  everywhere. That needs two carriers — a prompt sound that falls faster up
+  the keyboard and an aftersound with a slow tail that is lowered towards
+  the top — and RF PIANO's level profile now sits within two decibels of the
+  recording's at every second measured, with the brightness of a soft and a
+  loud note beside the recording's in the mids and the treble.
 - Strings and pianos rebuilt on the cartridges' own architectures, and a
   second bank of six. RF STRINGS is the ensemble — a 1:1 pair with the
   feedback loop, a stack ending in 3:1 and 14:1 for the rosin, the second
