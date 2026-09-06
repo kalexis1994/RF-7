@@ -58,6 +58,15 @@ pub(crate) fn build_to(output: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&dist)?;
     super::web_ui::build()?;
     fs::copy(&component, package.join("component.wasm"))?;
+    // The licence and the notices travel in the package, as they do in the
+    // other official instruments; the repository's own copies are the source.
+    for file in ["LICENSE", "NOTICE.md"] {
+        let source = root.join(file);
+        if !source.is_file() {
+            return Err(format!("the package needs {}", source.display()).into());
+        }
+        fs::copy(&source, package.join(file))?;
+    }
     run(Command::new(&core).arg("inspect").arg(&package))?;
     run(Command::new(&core)
         .arg("smoke")

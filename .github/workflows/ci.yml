@@ -1,10 +1,15 @@
 name: Rust quality
+
 on:
   push:
+    branches: ["**"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   rust:
     strategy:
@@ -24,7 +29,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: kalexis1994/rackforge
-          ref: 7c17bd4a480d1c0bd7fa18fa4d880e82429dffe1
+          ref: 2df1164ed034eaf9257c68a9d58cc3060f834b99
           path: rackforge
           persist-credentials: false
       - name: Install the pinned Rust toolchain
@@ -47,3 +52,83 @@ jobs:
         run: cargo run --locked --release -p rf7-lab -- demo --output renders/ci-demo.wav
       - name: Measure the sixteen-voice load
         run: cargo run --locked --release -p rf7-lab -- stress
+
+  rfplugin:
+    name: Portable .rfplugin
+    needs: rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: RF-7
+    steps:
+      - name: Check out RF-7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: RF-7
+          persist-credentials: false
+      - name: Check out the compatible SDK and its packager
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: kalexis1994/rackforge
+          ref: 2df1164ed034eaf9257c68a9d58cc3060f834b99
+          path: rackforge
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+      - name: Install the Rust WebAssembly bindings the surface is built with
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - name: Build RackForge's packager and inspector
+        working-directory: rackforge
+        run: cargo build --locked --release -p rackforge-store -p rackforge-core
+      - name: Build, inspect, smoke-test and pack the plugin
+        id: package
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' package/rackforge-plugin.toml | head -n 1)"
+          if [[ -z "$version" ]]; then
+            echo 'Could not read the plugin version from rackforge-plugin.toml.' >&2
+            exit 1
+          fi
+          cargo run --locked --release -p rf7-lab -- package
+          mkdir -p artifacts
+          mv "dist/RF-7-$version.rfplugin" artifacts/RF-7.rfplugin
+          (cd artifacts && sha256sum RF-7.rfplugin > RF-7.rfplugin.sha256)
+          cat artifacts/RF-7.rfplugin.sha256
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Upload the package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: RF-7-${{ steps.package.outputs.version }}-${{ github.sha }}
+          path: |
+            RF-7/artifacts/RF-7.rfplugin
+            RF-7/artifacts/RF-7.rfplugin.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  release:
+    name: Release on a tag
+    needs: rfplugin
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+      - name: Publish the release with the package and its digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          package="$(find artifacts -name 'RF-7.rfplugin' | head -n 1)"
+          digest="$(find artifacts -name 'RF-7.rfplugin.sha256' | head -n 1)"
+          test -s "$package" && test -s "$digest"
+          gh release create "$TAG" "$package" "$digest" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "RF-7 $TAG" \
+            --notes "RF-7 $TAG, built and verified by GitHub Actions from commit $GITHUB_SHA. The package is pinned by RackForge's Standard edition by version, URL and SHA-256: $(cut -d ' ' -f 1 "$digest")"

@@ -4,5 +4,7 @@
 /cartridges/
 /.cargo/config.toml
 /package/component.wasm
+/package/LICENSE
+/package/NOTICE.md
 /package/web/app.js
 /package/web/app_bg.wasm
