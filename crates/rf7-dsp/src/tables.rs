@@ -52,8 +52,24 @@ const SIXTEENTH_OCTAVE: f32 = LEVEL_UNITS_PER_OCTAVE / 16.0;
 /// operator regardless of velocity. It is the reference the others are
 /// measured from, and it is where the modulation index gets its 2^(−15/16).
 const VELOCITY_REFERENCE: i32 = 15;
-/// Where a break point of 0 sits on the MIDI scale.
-const BREAK_POINT_ANCHOR: i32 = 17;
+/// The firmware adds this to a break point before looking it up on the same
+/// key scale a played note is on: break point 0 is A-1, the twenty-first key
+/// from the bottom of its table.
+const BREAK_POINT_OFFSET: i32 = 20;
+/// The firmware's two keyboard scaling curves, verbatim: the distance from
+/// the break point in groups of three semitones indexes them, and the value
+/// is multiplied by the depth. The linear curve is not quite linear — its
+/// twenty-third entry is 0xB2 rather than 0xB0 — and both saturate.
+const SCALING_CURVE_EXP: [u8; 36] = [
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0B, 0x0E, 0x10, 0x13, 0x17, 0x1C,
+    0x21, 0x27, 0x2F, 0x39, 0x43, 0x50, 0x5F, 0x71, 0x86, 0xA0, 0xBE, 0xE0, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF,
+];
+const SCALING_CURVE_LIN: [u8; 36] = [
+    0x00, 0x08, 0x10, 0x18, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x78,
+    0x80, 0x88, 0x90, 0x98, 0xA0, 0xA8, 0xB2, 0xB8, 0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8,
+    0xFF, 0xFF, 0xFF, 0xFF,
+];
 /// One detune step, in octaves. About 1.7 cents.
 const DETUNE_OCTAVES: f64 = 0.001_417;
 /// Pitch envelope excursion at the extreme levels, in semitones.
@@ -79,32 +95,46 @@ pub fn scale_output_level(level: u8) -> i32 {
     }
 }
 
+/// Which of the firmware's forty-three scaling groups a key falls in.
+///
+/// The firmware indexes its curve with the top byte of the key's logarithmic
+/// pitch shifted down two places, which makes a group of every three keys
+/// with the boundaries where its pitch table puts them: keys 1, 2 and 3 are
+/// group 0, keys 4 to 6 group 1, and so on.
+fn scaling_group(key: i32) -> i32 {
+    (key.clamp(0, 127) - 1).max(0) / 3
+}
+
 /// Keyboard level scaling for one operator at one key, on the 0..=127 scale.
 ///
-/// Positive above the break point when the right curve is a positive one, and
-/// so on for the other three combinations. The result is added to the scaled
-/// output level before it is clamped.
-pub fn key_level_offset(note: u8, operator: &Operator) -> i32 {
-    let distance = i32::from(note) - i32::from(operator.break_point) - BREAK_POINT_ANCHOR;
-    if distance >= 0 {
-        signed_curve((distance + 1) / 3, operator.right_depth, operator.right())
+/// `key` is the key the firmware would see: the note played plus the voice's
+/// transpose, because the instrument scales the pitch it sounds rather than
+/// the key that was pressed. Positive above the break point when the right
+/// curve is a positive one, and so on for the other three combinations. The
+/// result is added to the scaled output level before it is clamped, which is
+/// where the firmware adds it to the operator's logarithmic level.
+pub fn key_level_offset(key: i32, operator: &Operator) -> i32 {
+    let distance = scaling_group(key)
+        - scaling_group(i32::from(operator.break_point.min(99)) + BREAK_POINT_OFFSET);
+    if distance > 0 {
+        signed_curve(distance, operator.right_depth, operator.right())
     } else {
-        signed_curve(-distance / 3, operator.left_depth, operator.left())
+        signed_curve(-distance, operator.left_depth, operator.left())
     }
 }
 
-fn signed_curve(group: i32, depth: u8, curve: Curve) -> i32 {
-    const EXPONENTIAL: [u8; 33] = [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 14, 16, 19, 23, 27, 33, 39, 47, 56, 66, 80, 94, 110, 126,
-        142, 158, 174, 190, 206, 222, 238, 250,
-    ];
-    let group = group.clamp(0, EXPONENTIAL.len() as i32 - 1);
-    let depth = i32::from(depth.min(99));
-    let magnitude = if curve.is_exponential() {
-        (i32::from(EXPONENTIAL[group as usize]) * depth * 329) >> 15
+/// The firmware's `curve[distance] × scale(depth)`, where `scale(depth)` is
+/// the top byte of `depth × 660` — 255 at depth 99 — and the product keeps
+/// its top byte, clamped to 127.
+fn signed_curve(distance: i32, depth: u8, curve: Curve) -> i32 {
+    let table = if curve.is_exponential() {
+        &SCALING_CURVE_EXP
     } else {
-        (group * depth * 329) >> 12
+        &SCALING_CURVE_LIN
     };
+    let index = distance.clamp(0, table.len() as i32 - 1) as usize;
+    let depth = (i32::from(depth.min(99)) * 660) >> 8;
+    let magnitude = ((i32::from(table[index]) * depth) >> 8).min(127);
     if curve.is_positive() {
         magnitude
     } else {
@@ -378,15 +408,18 @@ mod tests {
     #[test]
     fn key_scaling_runs_the_right_way_on_each_side() {
         let mut operator = Voice::init().operators[0];
-        operator.break_point = 39;
+        operator.break_point = 39; // C3, which is MIDI 60.
         operator.left_depth = 99;
         operator.right_depth = 99;
         operator.left_curve = 0; // -LIN
         operator.right_curve = 3; // +LIN
-        assert_eq!(
-            key_level_offset(39 + BREAK_POINT_ANCHOR as u8, &operator),
-            0
-        );
+        // The break point's own group of three keys is neutral, and the
+        // group above it is the first step of the right curve.
+        for key in 58..=60 {
+            assert_eq!(key_level_offset(key, &operator), 0, "key {key}");
+        }
+        assert_eq!(key_level_offset(61, &operator), (8 * 255) >> 8);
+        assert_eq!(key_level_offset(57, &operator), -((8 * 255) >> 8));
         assert!(key_level_offset(24, &operator) < 0);
         assert!(key_level_offset(96, &operator) > 0);
         // Swapping both curves mirrors the sign on both sides.
@@ -399,6 +432,32 @@ mod tests {
         operator.right_depth = 0;
         assert_eq!(key_level_offset(24, &operator), 0);
         assert_eq!(key_level_offset(96, &operator), 0);
+    }
+
+    #[test]
+    fn key_scaling_is_the_firmwares_curve_times_its_depth() {
+        // From the firmware: linear is eight a group, exponential follows
+        // its own table, the depth scales to 255 at 99 and 128 at 50, the
+        // product keeps its top byte and never exceeds 127.
+        let mut operator = Voice::init().operators[0];
+        operator.break_point = 39;
+        operator.right_curve = 3; // +LIN
+        operator.right_depth = 99;
+        assert_eq!(key_level_offset(72, &operator), (32 * 255) >> 8); // four groups
+        operator.right_depth = 50;
+        assert_eq!(
+            key_level_offset(72, &operator),
+            (32 * ((50 * 660) >> 8)) >> 8
+        );
+        operator.right_curve = 2; // +EXP
+        operator.right_depth = 99;
+        assert_eq!(key_level_offset(72, &operator), (4 * 255) >> 8);
+        assert_eq!(key_level_offset(90, &operator), (0x0B * 255) >> 8); // ten groups
+        // Twenty-three groups up: the exponential table has not saturated yet.
+        assert_eq!(key_level_offset(127, &operator), (0x71 * 255) >> 8);
+        // Four octaves of full linear depth is the whole dial.
+        operator.right_curve = 3;
+        assert_eq!(key_level_offset(108, &operator), 127);
     }
 
     #[test]

@@ -228,7 +228,7 @@ impl NoteVoice {
             // output level lives on, so it is clamped there before becoming
             // units; velocity is applied afterwards, in units.
             let scaled = (scale_output_level(operator.output_level)
-                + key_level_offset(note, operator))
+                + key_level_offset(transposed, operator))
             .clamp(0, 127);
             let ceiling = scaled as f32 * 32.0
                 + velocity_offset(velocity, operator.velocity_sensitivity) * setup.velocity_depth;

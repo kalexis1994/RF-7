@@ -51,6 +51,16 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- Keyboard level scaling exactly as the firmware builds it. The routine
+  that constructs each operator's forty-three-entry curve was read: the
+  break point plus twenty and the sounding key (note plus the voice's
+  transpose) go through the key-to-pitch table and lose two bits, so the
+  break point's own group of three keys is neutral — three keys higher
+  than RF-7 had it — and the distance indexes the firmware's linear and
+  exponential curve tables, now carried verbatim (the reconstructed
+  exponential table had diverged above the fifteenth group), multiplied by
+  the depth scaled to 255 at 99 and clamped at 127. Tests pin the groups,
+  the two curves, the depth scale and the clamp to the firmware's numbers.
 - The pianos measured against a real one. With the envelope clock right,
   RF PIANO, RF GRAND and RF UPRIGHT were read beside the Salamander grand
   at four registers and two dynamics, and rebuilt around what the recording
