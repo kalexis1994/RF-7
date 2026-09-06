@@ -42,6 +42,14 @@
   as U and its number. SETUP names the installed cartridge — the host says
   only that one is installed, so the surface remembers which grant it put
   there — and lights that pad.
+- The saxophone rebuilt on the instrument's own reed — algorithm 18, three
+  half-ratio modulators under one carrier, one of them the feedback loop,
+  a partial near 5.8:1 for the edge — after it measured as a bright spit
+  over a dull body (1029 Hz over 320 against SAX BC's 1303 over 1401). It
+  now reads 1337 over 1369 and holds. The sustained voices carry the
+  envelope-bias sensitivity the instrument's breath-controlled voices
+  carry, so the new breath and foot controllers swell them out of the box;
+  a test blows each of them.
 - The leads hold too. LEAD, SQUARE and SUB had the same fall as the brass —
   12, 8 and 14 dB from the peak to the body — and the instrument's own
   SYN-LEAD 2, 3 and 4 hold their note within a decibel. Their carriers now

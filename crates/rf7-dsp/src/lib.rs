@@ -1182,6 +1182,40 @@ mod tests {
     }
 
     #[test]
+    fn the_sustained_factory_voices_swell_under_the_breath_controller() {
+        // The instrument's breath-controlled voices set the amplitude
+        // modulation sensitivity on the operators the bias should lift, and
+        // RF-7's sustained voices do the same, so a breath controller has
+        // something to move out of the box; a struck voice does not answer.
+        let level = |name: &str, breath: f64| {
+            let mut engine = engine_with(Controls {
+                breath_range: 1.0,
+                breath_target: Target::Bias,
+                ..Controls::default()
+            });
+            let program = (0..engine.library().len())
+                .find(|i| {
+                    rf7_voice::printable_name(&engine.library().voice(*i).unwrap().name).trim()
+                        == name
+                })
+                .expect(name);
+            engine.select_program(program);
+            engine.control_change(0, CONTROL_BREATH, breath);
+            engine.note_on(0, 60, 100);
+            rms(&render(&mut engine, 24_000))
+        };
+        for name in ["RF BRASS", "RF SAX", "RF STRINGS", "RF LEAD", "RF PIPE"] {
+            let (rest, blown) = (level(name, 0.0), level(name, 1.0));
+            assert!(blown > rest * 1.5, "{name}: {rest} at rest, {blown} blown");
+        }
+        let (rest, blown) = (level("RF TINES", 0.0), level("RF TINES", 1.0));
+        assert!(
+            (blown - rest).abs() < 1e-6,
+            "a struck voice: {rest} {blown}"
+        );
+    }
+
+    #[test]
     fn the_foot_controller_is_a_controller_of_its_own() {
         let mut voice = Voice::init();
         voice.pitch_mod_sensitivity = 7;
