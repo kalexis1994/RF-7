@@ -7,8 +7,8 @@
 //! engine treats that as the instrument does: the voice stays busy.
 
 use crate::tables::{
-    LEVEL_FULL, LEVEL_HEADROOM, LEVEL_SILENT, key_rate_offset, level_gain, quantised_rate,
-    rate_units_per_second, rising_step, scale_output_level,
+    ATTACK_JUMP, LEVEL_FULL, LEVEL_HEADROOM, LEVEL_SILENT, key_rate_offset, level_gain,
+    quantised_rate, rate_units_per_second, rising_step, scale_output_level,
 };
 use rf7_voice::Operator;
 
@@ -24,8 +24,11 @@ pub struct Envelope {
     /// Units per sample, already divided by the sample rate.
     steps: [f32; SEGMENTS],
     segment: usize,
-    /// Rising segments slow near the top; only the level domain wants that.
+    /// Rising segments take the hardware's attack curve and skip its bottom;
+    /// only the level domain wants that.
     curved: bool,
+    /// Where envelope level 0 sits for this operator, in level units.
+    floor: f32,
     released: bool,
     settled: bool,
 }
@@ -38,6 +41,7 @@ impl Default for Envelope {
             steps: [0.0; SEGMENTS],
             segment: RELEASE,
             curved: false,
+            floor: 0.0,
             released: true,
             settled: true,
         }
@@ -82,6 +86,7 @@ impl Envelope {
             steps,
             segment: 0,
             curved: true,
+            floor: (ceiling - LEVEL_FULL).max(0.0),
             released: false,
             settled: false,
         }
@@ -108,6 +113,7 @@ impl Envelope {
             steps,
             segment: 0,
             curved: false,
+            floor: 0.0,
             released: false,
             settled: false,
         }
@@ -145,6 +151,12 @@ impl Envelope {
         let step = self.steps[self.segment];
         if self.level < target {
             let rise = if self.curved {
+                // The hardware starts every rise from forty decibels under
+                // the top rather than from silence.
+                let jump = self.floor + ATTACK_JUMP;
+                if self.level < jump {
+                    self.level = jump.min(target);
+                }
                 rising_step(self.level, step)
             } else {
                 step

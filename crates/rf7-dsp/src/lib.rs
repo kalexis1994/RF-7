@@ -1548,6 +1548,22 @@ mod tests {
         (db(attack), db(body))
     }
 
+    /// The attack's peak, and the peak of the half second that begins three
+    /// seconds into the note, in decibels.
+    fn attack_and_tail(name: &str) -> (f32, f32) {
+        let mut engine = engine();
+        let program = (0..engine.library().len())
+            .find(|i| printable_name(&engine.library().voice(*i).unwrap().name).trim() == name)
+            .expect(name);
+        engine.select_program(program);
+        engine.note_on(0, 60, 100);
+        let attack = peak(&render(&mut engine, 24_000));
+        render(&mut engine, 120_000);
+        let tail = peak(&render(&mut engine, 24_000));
+        let db = |value: f32| 20.0 * value.max(1e-9).log10();
+        (db(attack), db(tail))
+    }
+
     /// A voice that is meant to hold a note has to hold it.
     ///
     /// Every sustained voice in the bank was once written to attack to 99 and
@@ -1590,10 +1606,12 @@ mod tests {
             "RF HARPSI",
             "RF KOTO",
         ] {
-            let (attack, body) = attack_and_body(name);
+            // The hardware's decays are slow — a tine at rate 25 loses under
+            // five decibels a second — so the tail is read three seconds on.
+            let (attack, tail) = attack_and_tail(name);
             assert!(
-                body <= attack - 20.0,
-                "{name} is struck and should decay: {attack:.1} dB to {body:.1} dB"
+                tail <= attack - 20.0,
+                "{name} is struck and should decay: {attack:.1} dB to {tail:.1} dB"
             );
         }
     }

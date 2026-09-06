@@ -17,7 +17,7 @@ bright the whole instrument is — is derived from the chip's datapath and the
 firmware and matches the literature; a recording would confirm the last per
 cent.
 
-**No voice data ships here.** The thirty-two factory voices were written for RF-7.
+**No voice data ships here.** The thirty-eight factory voices were written for RF-7.
 The voices a DX7 shipped with are Yamaha's; RF-7 plays a cartridge you supply.
 
 ## Controls

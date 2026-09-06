@@ -188,12 +188,13 @@ mod tests {
         assert_eq!(json.matches("\"id\":\"program-").count(), FACTORY_VOICES);
         assert!(json.contains("\"id\":\"program-001\""));
         assert!(json.contains("\"name\":\"RF TINES\""));
-        assert!(json.contains("\"id\":\"program-032\""));
+        assert!(json.contains("\"id\":\"program-038\""));
         assert!(
-            !json.contains("program-033"),
-            "no padding past the cartridge"
+            !json.contains("program-039"),
+            "no padding past the second bank"
         );
-        assert_eq!(json.matches("\"id\":\"bank-").count(), 1);
+        // A cartridge of thirty-two and a second bank of six.
+        assert_eq!(json.matches("\"id\":\"bank-").count(), 2);
     }
 
     #[test]
@@ -255,8 +256,8 @@ mod tests {
             "a library voice opens in the editor, as a copy"
         );
         let banks = value["banks"].as_array().unwrap();
-        assert_eq!(banks.len(), 2);
-        assert_eq!(banks[1]["id"], "bank-user");
+        assert_eq!(banks.len(), 3);
+        assert_eq!(banks[2]["id"], "bank-user");
         assert!(
             !rendered(&factory_library()).contains("bank-user"),
             "no empty bank"

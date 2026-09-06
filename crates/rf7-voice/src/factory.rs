@@ -11,7 +11,7 @@ use crate::{
     parameters::{OPERATORS, Operator, Voice},
 };
 
-pub const FACTORY_VOICES: usize = 32;
+pub const FACTORY_VOICES: usize = 38;
 
 /// One of the [`FACTORY_VOICES`] voices. Out-of-range indexes give INIT VOICE.
 pub fn factory_voice(index: usize) -> Voice {
@@ -48,12 +48,19 @@ pub fn factory_voice(index: usize) -> Voice {
         29 => tubular(),
         30 => steel(),
         31 => timpani(),
+        32 => cellos(),
+        33 => violins(),
+        34 => orchestra(),
+        35 => grand(),
+        36 => upright(),
+        37 => ep_bright(),
         _ => Voice::init(),
     }
 }
 
-/// The factory voices: one full cartridge of thirty-two, every slot a voice
-/// written for RF-7. None is padding, and none is a transcription.
+/// The factory voices: a full cartridge of thirty-two and a second bank of
+/// six, every slot a voice written for RF-7. None is padding, and none is a
+/// transcription.
 pub fn factory_library() -> Library {
     let mut voices = [Voice::init(); FACTORY_VOICES];
     for (index, voice) in voices.iter_mut().enumerate() {
@@ -404,30 +411,75 @@ fn ep_hard() -> Voice {
     )
 }
 
-/// Algorithm 18: one carrier fed three ways. The stack behind OP4 is the
-/// hammer, gone in a tenth of a second; OP2 at 1:1 is the body that stays.
+/// Algorithm 19, the instrument's own piano: three carriers at 1:1 under
+/// modulators that hold — a 1:1 with the feedback loop and a 3:1 for the
+/// hammer's brightness — and a fourth carrier near 1.58:1 that dies in a
+/// tenth of a second, which is the knock. The decay is in two stages,
+/// thirteen decibels over the first seconds and then a long tail; rate
+/// scaling lets the treble die in a few seconds while the bass rings; the
+/// bass carrier is lifted and the treble modulators darkened.
 fn piano() -> Voice {
     voice(
         b"RF PIANO  ",
-        17,
-        5,
+        18,
+        6,
         [
-            struck(op([96, 30, 24, 45], [99, 88, 60, 0], 99, 1, 7, 3), 3),
-            struck(op([97, 40, 28, 50], [99, 70, 20, 0], 94, 1, 9, 6), 3),
             struck(
                 scaled(
-                    op([98, 50, 32, 55], [99, 55, 0, 0], 84, 2, 6, 7),
-                    50,
+                    op([82, 26, 21, 48], [99, 84, 0, 0], 99, 1, 5, 2),
                     0,
-                    40,
+                    80,
+                    0,
+                    3,
+                    0,
+                ),
+                4,
+            ),
+            struck(
+                scaled(
+                    op([98, 20, 20, 40], [99, 90, 80, 0], 86, 1, 9, 1),
+                    0,
+                    0,
+                    14,
                     0,
                     0,
                 ),
-                3,
+                5,
             ),
-            struck(op([99, 55, 36, 60], [99, 40, 0, 0], 78, 3, 7, 6), 3),
-            struck(op([99, 55, 40, 64], [99, 30, 0, 0], 70, 1, 8, 5), 3),
-            struck(op([99, 55, 48, 70], [99, 20, 0, 0], 65, 5, 7, 5), 3),
+            struck(
+                scaled(
+                    op([82, 25, 25, 15], [99, 99, 99, 0], 58, 3, 7, 0),
+                    47,
+                    30,
+                    70,
+                    3,
+                    0,
+                ),
+                5,
+            ),
+            struck(op([82, 24, 22, 45], [99, 80, 0, 0], 99, 1, 8, 2), 5),
+            struck(
+                scaled(
+                    fine(op([82, 58, 36, 40], [99, 14, 0, 0], 92, 1, 6, 1), 58),
+                    48,
+                    0,
+                    66,
+                    0,
+                    0,
+                ),
+                5,
+            ),
+            struck(
+                scaled(
+                    op([99, 20, 25, 40], [99, 88, 78, 0], 82, 1, 6, 0),
+                    0,
+                    0,
+                    10,
+                    0,
+                    0,
+                ),
+                5,
+            ),
         ],
     )
 }
@@ -600,7 +652,7 @@ fn horns() -> Voice {
                     ),
                     tremolo(
                         scaled(
-                            struck(op([46, 60, 30, 66], [96, 96, 94, 0], 82, 1, 7, 2), 3),
+                            struck(op([46, 60, 30, 66], [96, 96, 94, 0], 77, 1, 7, 2), 3),
                             39,
                             46,
                             50,
@@ -705,9 +757,11 @@ fn sax() -> Voice {
     )
 }
 
-/// Algorithm 2: the feedback is on OP2, the modulator of the first pair,
-/// which is what turns a sine into something bowed. Detuned carriers, slow
-/// attack, delayed vibrato.
+/// Algorithm 2, the instrument's own ensemble: one carrier under a 1:1
+/// modulator with the feedback loop — the bowed edge — and a second carrier
+/// under a stack that ends in a 3:1 and a 14:1 partial at low level, the
+/// rosin. The carriers sit a step apart, the attack is slow, the release long,
+/// and the second carrier darkens towards the top of the keyboard.
 fn strings() -> Voice {
     lfo(
         voice(
@@ -715,20 +769,30 @@ fn strings() -> Voice {
             1,
             6,
             [
-                tremolo(op([50, 30, 40, 48], [99, 95, 94, 0], 99, 1, 5, 3), 3),
-                op([52, 35, 38, 46], [99, 70, 64, 0], 84, 1, 9, 5),
-                tremolo(op([48, 28, 40, 48], [99, 95, 94, 0], 98, 1, 10, 3), 3),
-                op([50, 34, 38, 46], [99, 66, 60, 0], 84, 1, 6, 5),
-                op([52, 36, 38, 46], [99, 60, 50, 0], 72, 2, 8, 4),
-                op([54, 38, 38, 46], [99, 50, 40, 0], 66, 3, 7, 4),
+                tremolo(op([46, 26, 22, 42], [99, 88, 80, 0], 99, 1, 6, 2), 3),
+                op([72, 60, 20, 48], [85, 92, 70, 0], 83, 1, 8, 1),
+                tremolo(
+                    scaled(
+                        op([44, 40, 22, 52], [99, 88, 85, 0], 90, 1, 8, 3),
+                        56,
+                        0,
+                        90,
+                        0,
+                        0,
+                    ),
+                    3,
+                ),
+                op([95, 22, 22, 52], [99, 92, 88, 0], 77, 1, 7, 2),
+                op([55, 22, 22, 52], [88, 92, 88, 0], 80, 3, 7, 2),
+                op([55, 22, 22, 52], [99, 92, 88, 0], 52, 14, 7, 2),
             ],
         ),
-        34,
-        45,
-        24,
+        31,
+        20,
+        9,
         0,
         4,
-        3,
+        2,
     )
 }
 
@@ -1004,6 +1068,267 @@ fn timpani() -> Voice {
     ))
 }
 
+/// The low strings: the ensemble transposed an octave down with its ratios
+/// doubled, an 8:1 partial for the edge, and a slower bow.
+fn cellos() -> Voice {
+    octave_down(lfo(
+        voice(
+            b"RF CELLOS ",
+            1,
+            6,
+            [
+                tremolo(op([44, 30, 20, 40], [99, 90, 84, 0], 99, 2, 6, 2), 3),
+                op([70, 40, 20, 40], [92, 92, 80, 0], 80, 2, 8, 1),
+                tremolo(
+                    scaled(
+                        op([42, 30, 20, 46], [99, 90, 86, 0], 92, 2, 8, 2),
+                        60,
+                        0,
+                        80,
+                        0,
+                        0,
+                    ),
+                    3,
+                ),
+                op([90, 30, 20, 46], [99, 92, 88, 0], 76, 2, 7, 2),
+                op([52, 30, 20, 46], [90, 92, 88, 0], 66, 2, 7, 2),
+                op([52, 30, 20, 46], [99, 92, 88, 0], 56, 8, 7, 2),
+            ],
+        ),
+        30,
+        50,
+        9,
+        0,
+        4,
+        2,
+    ))
+}
+
+/// A section of violins: the ensemble with a quicker bow, a deeper vibrato
+/// that waits, the second carrier a step sharp, and the bow's own scoop into
+/// the note — flat, then to pitch — which is what the friction does.
+fn violins() -> Voice {
+    pitch_envelope(
+        lfo(
+            voice(
+                b"RF VIOLINS",
+                1,
+                6,
+                [
+                    tremolo(
+                        struck(op([58, 30, 24, 46], [99, 90, 86, 0], 99, 1, 6, 2), 1),
+                        3,
+                    ),
+                    op([80, 60, 24, 50], [88, 92, 74, 0], 82, 1, 8, 2),
+                    tremolo(
+                        scaled(
+                            struck(op([56, 40, 24, 52], [99, 90, 88, 0], 94, 1, 9, 3), 1),
+                            56,
+                            0,
+                            85,
+                            0,
+                            0,
+                        ),
+                        3,
+                    ),
+                    op([96, 24, 24, 52], [99, 92, 88, 0], 76, 1, 7, 2),
+                    op([60, 24, 24, 52], [90, 92, 88, 0], 82, 3, 7, 2),
+                    op([60, 24, 24, 52], [99, 92, 88, 0], 54, 14, 7, 2),
+                ],
+            ),
+            33,
+            46,
+            22,
+            0,
+            4,
+            2,
+        ),
+        [92, 99, 99, 99],
+        [46, 50, 50, 50],
+    )
+}
+
+/// The whole section at once, an octave down: 1:1 and 2:1 carriers under
+/// their modulators, a 2:1 pair for the upper strings, an 8:1 edge, and a
+/// long swell that settles rather than holds — the instrument's orchestra
+/// does the same, over the length of a phrase.
+fn orchestra() -> Voice {
+    octave_down(lfo(
+        voice(
+            b"RF ORCHSTR",
+            1,
+            7,
+            [
+                tremolo(op([50, 40, 12, 45], [99, 96, 80, 0], 99, 1, 7, 1), 3),
+                op([54, 46, 30, 58], [99, 93, 90, 0], 80, 1, 3, 1),
+                tremolo(op([52, 30, 12, 47], [99, 92, 76, 0], 95, 2, 11, 1), 3),
+                op([56, 60, 12, 45], [98, 98, 70, 0], 70, 2, 7, 1),
+                op([74, 70, 12, 55], [99, 92, 70, 0], 76, 2, 7, 1),
+                op([72, 74, 12, 32], [99, 92, 60, 0], 78, 8, 7, 1),
+            ],
+        ),
+        30,
+        60,
+        7,
+        0,
+        4,
+        3,
+    ))
+}
+
+/// A bright grand: algorithm 3, two stacks of three. A 7:1 partial at full
+/// level behind the first carrier is the hammer, gone in a moment; a
+/// half-ratio thump with the feedback loop sits behind the second. Level
+/// scaling opens the modulators in the bass and closes them in the treble.
+fn grand() -> Voice {
+    voice(
+        b"RF GRAND  ",
+        2,
+        4,
+        [
+            struck(op([90, 30, 26, 45], [99, 94, 0, 0], 88, 1, 4, 3), 3),
+            struck(
+                scaled(
+                    op([98, 36, 8, 32], [92, 90, 0, 0], 84, 1, 10, 0),
+                    50,
+                    22,
+                    50,
+                    3,
+                    0,
+                ),
+                2,
+            ),
+            struck(
+                scaled(
+                    op([94, 78, 20, 14], [84, 66, 0, 0], 96, 7, 5, 3),
+                    43,
+                    9,
+                    20,
+                    3,
+                    0,
+                ),
+                3,
+            ),
+            struck(op([90, 62, 26, 45], [99, 96, 0, 0], 96, 1, 10, 2), 3),
+            struck(
+                scaled(
+                    op([98, 22, 8, 4], [92, 90, 0, 0], 86, 1, 6, 1),
+                    41,
+                    0,
+                    27,
+                    0,
+                    0,
+                ),
+                2,
+            ),
+            struck(
+                scaled(
+                    op([82, 72, 16, 12], [99, 20, 0, 0], 82, 0, 8, 5),
+                    53,
+                    0,
+                    0,
+                    0,
+                    3,
+                ),
+                3,
+            ),
+        ],
+    )
+}
+
+/// A darker upright, an octave down: algorithm 18, one carrier fed three
+/// ways — a 1:1 that holds, a 5:1 for the hammer that dies, and a stack of
+/// two half-ratio operators under the body — with a slow first stage and a
+/// tail that keeps a little.
+fn upright() -> Voice {
+    octave_down(voice(
+        b"RF UPRIGHT",
+        17,
+        5,
+        [
+            struck(op([80, 24, 12, 50], [99, 64, 0, 0], 96, 1, 7, 2), 3),
+            struck(
+                scaled(
+                    op([96, 10, 25, 20], [99, 76, 0, 0], 86, 1, 9, 1),
+                    0,
+                    0,
+                    10,
+                    0,
+                    0,
+                ),
+                2,
+            ),
+            struck(
+                scaled(
+                    op([90, 28, 20, 50], [99, 84, 0, 0], 82, 5, 8, 1),
+                    32,
+                    0,
+                    27,
+                    0,
+                    0,
+                ),
+                5,
+            ),
+            struck(op([97, 28, 12, 25], [99, 86, 48, 0], 84, 1, 6, 1), 3),
+            struck(
+                scaled(
+                    op([90, 70, 33, 31], [99, 0, 0, 0], 92, 0, 7, 1),
+                    27,
+                    0,
+                    26,
+                    2,
+                    0,
+                ),
+                3,
+            ),
+            struck(
+                scaled(
+                    op([92, 70, 58, 36], [99, 0, 0, 0], 78, 0, 8, 1),
+                    36,
+                    0,
+                    96,
+                    0,
+                    0,
+                ),
+                3,
+            ),
+        ],
+    ))
+}
+
+/// A brighter electric piano than RF EP HARD: algorithm 5, the 14:1 tine
+/// pair at a higher level with a longer decay, so the bell stays in the
+/// tone rather than only opening the note, and a slow pitch settle.
+fn ep_bright() -> Voice {
+    pitch_envelope(
+        voice(
+            b"RF EP BELL",
+            4,
+            6,
+            [
+                struck(op([96, 30, 26, 60], [99, 76, 0, 0], 99, 1, 7, 2), 3),
+                struck(op([95, 42, 32, 70], [99, 74, 0, 0], 62, 14, 7, 6), 3),
+                struck(op([95, 22, 20, 50], [99, 93, 0, 0], 99, 1, 5, 2), 3),
+                struck(op([95, 30, 20, 50], [99, 94, 0, 0], 86, 1, 9, 5), 3),
+                struck(op([95, 22, 20, 50], [99, 93, 0, 0], 99, 1, 3, 1), 3),
+                struck(
+                    scaled(
+                        op([95, 30, 20, 50], [99, 94, 0, 0], 80, 1, 11, 5),
+                        41,
+                        0,
+                        19,
+                        0,
+                        0,
+                    ),
+                    3,
+                ),
+            ],
+        ),
+        [99, 60, 99, 99],
+        [52, 50, 50, 50],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1024,7 +1349,10 @@ mod tests {
         assert_eq!(library.found(), FACTORY_VOICES);
         assert!(library.corrections().is_clean());
         assert_eq!(library.voice(0), Some(&factory_voice(0)));
-        assert_eq!(library.voice(FACTORY_VOICES - 1), Some(&factory_voice(31)));
+        assert_eq!(
+            library.voice(FACTORY_VOICES - 1),
+            Some(&factory_voice(FACTORY_VOICES - 1))
+        );
         assert_eq!(library.voice(FACTORY_VOICES), None);
     }
 

@@ -34,11 +34,17 @@ pub const LEVEL_HEADROOM: f32 = 11.0 * LEVEL_UNITS_PER_OCTAVE / 16.0;
 /// measure, and a voice that waited for exactly zero would never be freed.
 pub const LEVEL_SILENT: f32 = LEVEL_HEADROOM;
 
-/// The rising part of an envelope slows as it approaches the top. The ceiling
-/// sits above [`LEVEL_FULL`] so the last of the attack still moves.
-const ATTACK_CEILING: f32 = 4935.0;
-/// Level units per second at the slowest quantised rate.
-const RATE_BASE_UNITS: f32 = 64.0;
+/// Level units per second at the slowest quantised rate: on the hardware the
+/// level moves one step every 4096 samples of its 49096 Hz clock, which is
+/// 0.28 dB a second, so a full decay at rate 0 takes over five minutes.
+const RATE_BASE_UNITS: f32 = 49_096.0 / 4096.0;
+/// The hardware's full scale, in level units, which is what the attack
+/// measures its distance from.
+const ATTACK_FULL_SCALE: f32 = 4095.0;
+/// A rising segment that starts under this many units above the operator's
+/// floor jumps to it first: the hardware skips the inaudible bottom forty
+/// decibels of an attack, which is what makes its attacks crisp.
+pub const ATTACK_JUMP: f32 = 1700.0;
 /// One sixteenth of an octave, which is the unit the firmware's velocity
 /// term is counted in, expressed in level units.
 const SIXTEENTH_OCTAVE: f32 = LEVEL_UNITS_PER_OCTAVE / 16.0;
@@ -124,14 +130,20 @@ pub fn quantised_rate(rate: u8, key_offset: i32) -> i32 {
     ((i32::from(rate.min(99)) * 41) / 64 + key_offset).clamp(0, 63)
 }
 
-/// Level units per second at a quantised rate. Four steps double the speed.
+/// Level units per second at a quantised rate. Four steps double the speed,
+/// and the steps between are linear — the hardware's `(1 + (q mod 4) / 4) ×
+/// 2^(q div 4)` — so a decay is a straight line in decibels.
 pub fn rate_units_per_second(quantised: i32) -> f32 {
-    RATE_BASE_UNITS * ((quantised as f32) / 4.0).exp2()
+    let quantised = quantised.clamp(0, 63);
+    RATE_BASE_UNITS * ((quantised / 4) as f32).exp2() * (1.0 + 0.25 * (quantised % 4) as f32)
 }
 
-/// The step a rising segment takes, which shortens as it nears the top.
+/// The step a rising segment takes: the decay's step, multiplied by how far
+/// the level still is from full scale, in 256-unit bands, plus two. That is
+/// the hardware's attack — fast from the bottom, slowing towards the top,
+/// which reads as roughly linear in decibels.
 pub fn rising_step(level: f32, units: f32) -> f32 {
-    units * ((ATTACK_CEILING - level) / ATTACK_CEILING).max(0.0)
+    units * (2.0 + ((ATTACK_FULL_SCALE - level) / 256.0).floor()).max(1.0)
 }
 
 /// The modulation index, in radians, that an operator at this output level

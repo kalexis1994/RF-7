@@ -340,9 +340,9 @@ fn only_this_plugins_program_identifiers_are_accepted() {
     let mut processor = prepared();
     assert_eq!(processor.program_count(), FACTORY_VOICES);
     assert!(processor.load_preset("program-001"));
-    assert!(processor.load_preset("program-032"));
-    // Well-formed, but this library has no thirty-third voice.
-    assert!(!processor.load_preset("program-033"));
+    assert!(processor.load_preset("program-038"));
+    // Well-formed, but this library has no thirty-ninth voice.
+    assert!(!processor.load_preset("program-039"));
     assert!(!processor.load_preset("program-128"));
     assert!(!processor.load_preset("program-129"));
     assert!(
@@ -371,8 +371,8 @@ fn the_catalog_fits_the_declared_transfer_buffer() {
     assert_eq!(json.matches("\"id\":\"program-").count(), FACTORY_VOICES);
     assert!(json.contains("RF TINES"));
     assert!(
-        !json.contains("program-033"),
-        "one cartridge, no padding past it"
+        !json.contains("program-039"),
+        "a cartridge and a second bank of six, no padding past them"
     );
 }
 

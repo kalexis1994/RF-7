@@ -42,6 +42,28 @@
   as U and its number. SETUP names the installed cartridge — the host says
   only that one is installed, so the surface remembers which grant it put
   there — and lights that pad.
+- The envelope clock is the hardware's. RF-7's envelopes had run on a guessed
+  scale: measured against the MSFA project's hardware measurements, decays
+  were five times too fast and attacks three times too slow, so a piano died
+  in a second and a string section smeared. The engine now uses the measured
+  curve — one level step every 4096 samples at rate 0, four quantised steps
+  to double, the attack's `2 + (full − level) / 256` factor and its 40 dB
+  jump — and its seconds per rate match the hardware's table to a few per
+  cent. Every voice in the bank was measured again against its reference
+  afterwards.
+- Strings and pianos rebuilt on the cartridges' own architectures, and a
+  second bank of six. RF STRINGS is the ensemble — a 1:1 pair with the
+  feedback loop, a stack ending in 3:1 and 14:1 for the rosin, the second
+  carrier darkened towards the top; RF CELLOS the same an octave down with
+  doubled ratios and an 8:1 edge; RF VIOLINS quicker, with a deeper vibrato
+  that waits and the bow's scoop; RF ORCHSTR the whole section with a long
+  swell. RF PIANO is the instrument's own piano: three 1:1 carriers under
+  held modulators, a 1.58:1 knock that dies in a tenth of a second, a
+  two-stage decay, rate scaling that lets the treble die while the bass
+  rings; RF GRAND the bright grand with a 7:1 hammer and a half-ratio thump;
+  RF UPRIGHT the darker one an octave down; RF EP BELL a brighter electric
+  piano with a longer bell. Each measured within a few per cent of its
+  reference's brightness and decay profile.
 - PERFORM laid out as the instrument's function layer: KEYBOARD for the
   bend range, tuning, transpose, voice mode and portamento, and CONTROLLERS
   as one row per controller with its reach and its destination side by side,
