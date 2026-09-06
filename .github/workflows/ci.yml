@@ -78,6 +78,8 @@ jobs:
         run: rustup show
       - name: Install the Rust WebAssembly bindings the surface is built with
         run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - name: Install the system libraries RackForge's tools link against
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev pkg-config
       - name: Build RackForge's packager and inspector
         working-directory: rackforge
         run: cargo build --locked --release -p rackforge-store -p rackforge-core
