@@ -51,6 +51,17 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- The pitch envelope on the firmware's own tables. `TABLE_PITCH_EG_LEVEL`
+  carried verbatim: a level is a byte whose top seven bits join a pitch word
+  of 4096 to the octave, so a step is 3/8 of a semitone, the middle of the
+  table is one step a level and the ends steepen to four octaves. The rates
+  read `TABLE_PITCH_EG_RATE` — the portamento's table — added to that word
+  every second timer tick, a straight line in log pitch at a speed that does
+  not depend on the distance: 140 semitones a second at 99, half of one at
+  0. The quadratic curve that stood in for the levels was a third of the
+  real deviation through the middle, and the rates had borrowed the
+  operators' curve. The factory voices' scoops were re-read onto the table
+  so each keeps the deviation it was written for.
 - Keyboard level scaling exactly as the firmware builds it. The routine
   that constructs each operator's forty-three-entry curve was read: the
   break point plus twenty and the sounding key (note plus the voice's

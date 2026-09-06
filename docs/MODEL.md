@@ -54,7 +54,8 @@ the 4064-unit range spans a little over 96 dB.
 | Keyboard rate scaling `(sensitivity × clamp(note/3 − 7, 0, 31)) / 8` | Documented | |
 | Four quantised steps double the speed | **Approximate** | The base is set so the fastest full sweep is about 1.2 ms and the slowest about 63 s. Both ends want measuring. |
 | Rising segments slow as they approach the top | **Approximate** | An exponential approach to a ceiling 21% above unity, which reproduces the shape but not a measured curve. |
-| Pitch envelope, level 50 as centre | **Approximate** | A quadratic curve reaching four octaves at the extremes: gentle near centre, steep at the ends. The real table is not this. |
+| Pitch envelope levels | Documented, from the firmware | `TABLE_PITCH_EG_LEVEL`, verbatim: a level to a byte whose top seven bits are added to the voice's pitch word, which counts 4096 to the octave, so one step of the table is 3/8 of a semitone. 50 is the centre, the table is one step a level from 18 to 85 and steepens at the ends, and 0 and 99 are four octaves down and up. A quadratic curve stood here before; it was a third of the real deviation through the middle. |
+| Pitch envelope rates | Documented in part, from the firmware | `PITCH_EG_PROCESS` adds `TABLE_PITCH_EG_RATE[rate]` — the same table the portamento reads — to the pitch word on every second timer tick, and a segment ends when it reaches or crosses its level: a straight line in the logarithmic pitch domain at a speed that does not depend on the distance. Rate 99 moves 140 semitones a second, rate 50 twenty-two, rate 0 half of one. The tick is the same inferred 187 a second as the portamento's. Before this the pitch envelope borrowed the operators' rate curve. |
 
 ## Modulation
 

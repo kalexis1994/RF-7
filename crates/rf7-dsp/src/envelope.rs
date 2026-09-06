@@ -8,7 +8,8 @@
 
 use crate::tables::{
     ATTACK_JUMP, LEVEL_FULL, LEVEL_HEADROOM, LEVEL_SILENT, key_rate_offset, level_gain,
-    quantised_rate, rate_units_per_second, rising_step, scale_output_level,
+    pitch_eg_semitones_per_second, quantised_rate, rate_units_per_second, rising_step,
+    scale_output_level,
 };
 use rf7_voice::Operator;
 
@@ -93,7 +94,9 @@ impl Envelope {
     }
 
     /// The pitch envelope, shared by every operator in the voice. Its unit is
-    /// the semitone and it has no ceiling to approach, so it does not curve.
+    /// the semitone; it runs on the firmware's own rate table rather than the
+    /// operators' curve, and it has no ceiling to approach, so it does not
+    /// curve.
     pub fn pitch(
         targets: [f32; SEGMENTS],
         rates: [u8; SEGMENTS],
@@ -103,9 +106,7 @@ impl Envelope {
         let mut steps = [0.0; SEGMENTS];
         let seconds = sample_rate * time_scale.max(f32::MIN_POSITIVE);
         for segment in 0..SEGMENTS {
-            let quantised = quantised_rate(rates[segment], 0);
-            // The same rate curve, rescaled from level units to semitones.
-            steps[segment] = rate_units_per_second(quantised) * (96.0 / LEVEL_FULL) / seconds;
+            steps[segment] = pitch_eg_semitones_per_second(rates[segment]) / seconds;
         }
         Self {
             level: targets[RELEASE],
@@ -305,7 +306,8 @@ mod tests {
         let mut envelope =
             Envelope::pitch([12.0, 12.0, 12.0, 0.0], [99, 60, 60, 60], 1.0, 48_000.0);
         assert_eq!(envelope.level(), 0.0);
-        let held = run(&mut envelope, 480);
+        // Rate 99 covers an octave in under a tenth of a second.
+        let held = run(&mut envelope, 4_800);
         assert!(
             (held - 12.0).abs() < 0.01,
             "the sweep should be up at {held}"

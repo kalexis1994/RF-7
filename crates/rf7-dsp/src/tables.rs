@@ -72,8 +72,25 @@ const SCALING_CURVE_LIN: [u8; 36] = [
 ];
 /// One detune step, in octaves. About 1.7 cents.
 const DETUNE_OCTAVES: f64 = 0.001_417;
-/// Pitch envelope excursion at the extreme levels, in semitones.
-const PITCH_EG_RANGE: f32 = 48.0;
+/// The firmware's pitch envelope level table, verbatim: a level 0..=99 to a
+/// byte whose top seven bits sit in the voice's pitch word. 128 is the
+/// centre; the table is one step a level through the middle and steepens at
+/// the ends, so 99 is four octaves up and 0 four octaves down.
+const PITCH_EG_LEVEL: [u8; 100] = [
+    0x00, 0x0C, 0x18, 0x21, 0x2B, 0x34, 0x3C, 0x43, 0x48, 0x4C, 0x4F, 0x52, 0x55, 0x57, 0x59, 0x5B,
+    0x5D, 0x5F, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D,
+    0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D,
+    0x7E, 0x7F, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D,
+    0x8E, 0x8F, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B, 0x9C, 0x9D,
+    0x9E, 0x9F, 0xA0, 0xA1, 0xA2, 0xA3, 0xA6, 0xA8, 0xAB, 0xAE, 0xB1, 0xB5, 0xBA, 0xC1, 0xC9, 0xD2,
+    0xDC, 0xE7, 0xF3, 0xFF,
+];
+/// The pitch envelope's centre in that table.
+const PITCH_EG_CENTRE: f32 = 128.0;
+/// One step of the level table, in semitones: the byte is shifted seven
+/// places into a pitch word that counts 4096 to the octave, so a step is
+/// 128 / 4096 of an octave.
+const PITCH_EG_STEP_SEMITONES: f32 = 12.0 * 128.0 / 4096.0;
 /// LFO pitch excursion at full depth and the highest sensitivity.
 const PITCH_MOD_RANGE: f32 = 12.0;
 /// Level units removed by amplitude modulation at full depth.
@@ -292,12 +309,13 @@ const PITCH_UNITS_PER_OCTAVE: f32 = 1024.0;
 /// How often the hardware moves a gliding voice, in updates per second.
 ///
 /// `PORTA_PROCESS` runs from the periodic timer interrupt and takes half the
-/// sixteen voices each time, so a voice is moved every second tick. The tick
-/// is the timer's 3140 counts, which is about 374 Hz on the instrument's
-/// clock. The rate table is the firmware's; this number is the one part of
-/// the timing that is inferred rather than read, and it is what a recording
-/// would settle.
-const PORTAMENTO_UPDATES_PER_SECOND: f32 = 187.0;
+/// sixteen voices each time, and `PITCH_EG_PROCESS` runs every second tick
+/// over all of them, so both move a voice's pitch every second tick. The
+/// tick is the timer's 3140 counts, which is about 374 Hz on the
+/// instrument's clock. The rate table is the firmware's; this number is the
+/// one part of the timing that is inferred rather than read, and it is what
+/// a recording would settle.
+const PITCH_UPDATES_PER_SECOND: f32 = 187.0;
 
 /// Portamento time 0..=99 to the semitones a glide covers each second.
 ///
@@ -307,7 +325,7 @@ const PORTAMENTO_UPDATES_PER_SECOND: f32 = 187.0;
 /// further octave. [`portamento_octave_boost`] is that multiplier.
 pub fn portamento_semitones_per_second(time: u8) -> f32 {
     let rate = f32::from(PITCH_RATE[usize::from(99 - time.min(99))]);
-    rate * PORTAMENTO_UPDATES_PER_SECOND / PITCH_UNITS_PER_OCTAVE * 12.0
+    rate * PITCH_UPDATES_PER_SECOND / PITCH_UNITS_PER_OCTAVE * 12.0
 }
 
 /// The firmware's `(distance >> 10) + 1`: one extra step of speed for every
@@ -334,14 +352,46 @@ pub fn amp_mod_units(sensitivity: u8) -> f32 {
 /// small departures most patches use stay usable on the same 0..=99 dial as a
 /// four-octave sweep.
 pub fn pitch_eg_semitones(level: u8) -> f32 {
-    let position = ((f32::from(level.min(99)) - 50.0) / 49.0).clamp(-1.0, 1.0);
-    position * position.abs() * PITCH_EG_RANGE
+    (f32::from(PITCH_EG_LEVEL[usize::from(level.min(99))]) - PITCH_EG_CENTRE)
+        * PITCH_EG_STEP_SEMITONES
 }
+
+/// Pitch envelope rate 0..=99 to the semitones a segment moves each second.
+///
+/// `PITCH_EG_PROCESS` adds the rate table's entry to the voice's pitch word
+/// — 4096 to the octave — on every second timer tick, and a segment ends
+/// when it reaches or crosses its level. So a segment is a straight line in
+/// the logarithmic pitch domain, at the same speed whatever its distance.
+pub fn pitch_eg_semitones_per_second(rate: u8) -> f32 {
+    f32::from(PITCH_RATE[usize::from(rate.min(99))]) * PITCH_UPDATES_PER_SECOND
+        / PITCH_WORD_PER_OCTAVE
+        * 12.0
+}
+
+/// What the pitch envelope's word counts to the octave: the frequency's
+/// top byte steps sixteen times an octave, shifted up eight.
+const PITCH_WORD_PER_OCTAVE: f32 = 4096.0;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rf7_voice::Voice;
+
+    #[test]
+    fn the_pitch_envelope_reads_the_firmwares_level_and_rate_tables() {
+        // Level 50 is the centre, 99 is four octaves up less a step, 0 is
+        // four octaves down, and through the middle a level is 3/8 of a
+        // semitone.
+        assert_eq!(pitch_eg_semitones(50), 0.0);
+        assert!((pitch_eg_semitones(99) - 127.0 * 0.375).abs() < 1e-4);
+        assert!((pitch_eg_semitones(0) + 48.0).abs() < 1e-4);
+        assert!((pitch_eg_semitones(40) + 3.75).abs() < 1e-4);
+        assert!((pitch_eg_semitones(60) - 3.75).abs() < 1e-4);
+        // The rate table's entry, 187 times a second, over 4096 an octave.
+        assert!((pitch_eg_semitones_per_second(99) - 255.0 * 187.0 / 4096.0 * 12.0).abs() < 1e-3);
+        assert!((pitch_eg_semitones_per_second(0) - 187.0 / 4096.0 * 12.0).abs() < 1e-3);
+        assert!(pitch_eg_semitones_per_second(50) < pitch_eg_semitones_per_second(51));
+    }
 
     #[test]
     fn the_level_scale_spans_ninety_six_decibels() {
@@ -506,7 +556,7 @@ mod tests {
         assert_eq!(pitch_eg_semitones(50), 0.0);
         assert!(pitch_eg_semitones(99) > 40.0);
         assert!(pitch_eg_semitones(0) < -40.0);
-        assert!(pitch_eg_semitones(55).abs() < 1.0);
+        assert!((pitch_eg_semitones(55) - 1.875).abs() < 1e-4);
         assert_eq!(pitch_mod_semitones(0), 0.0);
         assert!(pitch_mod_semitones(7) > pitch_mod_semitones(3));
         assert_eq!(amp_mod_units(0), 0.0);
