@@ -1,6 +1,9 @@
 //! What the host is allowed to do to this plugin, and what it gets back.
 
-use rackforge_plugin_sdk::{MidiEvent, ParameterEvent, Processor};
+use rackforge_plugin_sdk::{
+    MIDI2_FLAG_ORIGIN_7BIT, MIDI2_KIND_CONTROL_CHANGE, MidiEvent, MidiEvent2, ParameterEvent,
+    Processor,
+};
 use rf7_plugin::{
     MAX_FRAMES, MAX_RESOURCE_BYTES, PARAMETER_COUNT, PARAMETER_GAIN, RESOURCE_CARTRIDGE,
     Rf7Processor, TRANSFER_BYTES, parameters,
@@ -501,4 +504,65 @@ fn reset_stops_every_sounding_note() {
     assert!(peak(&render(&mut processor, &midi, 4)) > 0.0);
     processor.reset();
     assert_eq!(peak(&render(&mut processor, &[], 4)), 0.0);
+}
+
+/// The modulation wheel reaches the pitch at both MIDI widths: a held note
+/// on RF ORGAN with the wheel up differs from the same note without it, and
+/// the wide and the narrow wheel give the same result.
+#[test]
+fn the_modulation_wheel_reaches_the_pitch_at_both_midi_widths() {
+    let wheel_narrow = [MidiEvent::new(0, [0xb0, 1, 127], 3).unwrap()];
+    let wheel_wide = [MidiEvent2 {
+        frame: 0,
+        kind: MIDI2_KIND_CONTROL_CHANGE,
+        channel: 0,
+        index: 1,
+        flags: MIDI2_FLAG_ORIGIN_7BIT,
+        value: 127 << 25,
+        extra: 0,
+    }];
+    let render_with = |narrow: &[MidiEvent], wide: &[MidiEvent2]| {
+        let mut processor = prepared();
+        assert!(processor.load_preset("program-007"), "RF ORGAN");
+        let mut collected = Vec::new();
+        for block in 0..40 {
+            let mut output = vec![0.0; FRAMES as usize * 2];
+            let mut events = vec![note_on(0, 69, 100)];
+            if block == 0 {
+                events.extend_from_slice(narrow);
+            }
+            let midi2 = if block == 0 { wide } else { &[] };
+            processor.process_wide(
+                &[],
+                &mut output,
+                &events[..if block == 0 { events.len() } else { 0 }],
+                midi2,
+                &[],
+                FRAMES,
+                0,
+                2,
+            );
+            collected.extend_from_slice(&output);
+        }
+        collected
+    };
+    let plain = render_with(&[], &[]);
+    let narrow = render_with(&wheel_narrow, &[]);
+    let wide = render_with(&[], &wheel_wide);
+    let difference = |a: &[f32], b: &[f32]| {
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f32, f32::max)
+    };
+    let tail = plain.len() / 2;
+    assert!(
+        difference(&plain[tail..], &narrow[tail..]) > 0.05,
+        "the wheel moved nothing: {}",
+        difference(&plain[tail..], &narrow[tail..])
+    );
+    assert!(
+        difference(&narrow[tail..], &wide[tail..]) < 1e-4,
+        "the wide wheel differs from the narrow one"
+    );
 }
