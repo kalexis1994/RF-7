@@ -2,7 +2,7 @@
 //! `postMessage`. Decisions live in the sibling modules; this one wires them.
 
 use crate::client::{self, Client};
-use crate::model::{FieldValue, State};
+use crate::model::{Clipboard, FieldValue, State};
 use crate::{PLUGIN_ID, PROTOCOL, render};
 use js_sys::{JSON, Object};
 use serde_json::{Value, json};
@@ -16,6 +16,9 @@ use web_sys::{
 const SECTIONS: [&str; 3] = ["header", "tabs", "page"];
 /// Where the browser keeps the grant SETUP installed last.
 const INSTALLED_GRANT_KEY: &str = "rf7.cartridge.grant";
+/// Where the browser keeps the operator copied last, so it can be pasted
+/// into another program, or after the surface has been closed and opened.
+const CLIPBOARD_KEY: &str = "rf7.operator.clipboard";
 const POLL_MS: f64 = 3000.0;
 /// How far a pointer travels for a knob's whole range, in pixels. The other
 /// RackForge instruments use the same throw.
@@ -327,6 +330,24 @@ impl App {
             }
             ("alg-prev", Some(_)) => self.step_algorithm(-1),
             ("alg-next", Some(_)) => self.step_algorithm(1),
+            ("copy-op", Some(_)) => {
+                if let Some(n) = operator_number(element)
+                    && let Some(clipboard) = self.state.copy_operator(n)
+                {
+                    self.state.status = format!("OP{n} copied");
+                    self.remember_clipboard(Some(clipboard));
+                }
+            }
+            ("paste-op", Some(_)) => {
+                if self.state.comparing {
+                    return;
+                }
+                if let Some(n) = operator_number(element) {
+                    for (id, value) in self.state.paste_plan(n) {
+                        self.edit_field(&id, value, false);
+                    }
+                }
+            }
             ("choose-cartridge", _) => {
                 self.state.busy = "Waiting for the file explorer...".into();
                 self.state.notice.clear();
@@ -362,6 +383,19 @@ impl App {
         self.installing = Some(grant.to_owned());
         self.client
             .queue(client::install_resource(render::CARTRIDGE, grant));
+    }
+
+    /// Keep the copied operator across programs and sessions of the surface.
+    fn remember_clipboard(&mut self, clipboard: Option<Clipboard>) {
+        if let Ok(Some(storage)) = self.window.local_storage() {
+            let _ = match &clipboard {
+                Some(clipboard) => {
+                    storage.set_item(CLIPBOARD_KEY, &clipboard.to_json().to_string())
+                }
+                None => storage.remove_item(CLIPBOARD_KEY),
+            };
+        }
+        self.state.clipboard = clipboard;
     }
 
     /// Remember which grant is installed, across sessions of the surface.
@@ -544,6 +578,15 @@ fn attribute(element: &Element, name: &str) -> Option<f64> {
     element.get_attribute(name)?.parse().ok()
 }
 
+/// Which operator's card a key belongs to.
+fn operator_number(element: &Element) -> Option<usize> {
+    element
+        .get_attribute("data-op")?
+        .parse()
+        .ok()
+        .filter(|n| (1..=6).contains(n))
+}
+
 /// The range input of the knob an event landed on, if it landed on one.
 fn knob_input(target: Option<web_sys::EventTarget>) -> Option<Element> {
     target?
@@ -719,11 +762,15 @@ pub fn start() -> Result<(), JsValue> {
         .body()
         .and_then(|body| body.get_attribute("data-surface"))
         .unwrap_or_else(|| "play".to_owned());
-    let installed_grant = window
-        .local_storage()
-        .ok()
-        .flatten()
+    let storage = window.local_storage().ok().flatten();
+    let installed_grant = storage
+        .as_ref()
         .and_then(|storage| storage.get_item(INSTALLED_GRANT_KEY).ok().flatten());
+    let clipboard = storage
+        .as_ref()
+        .and_then(|storage| storage.get_item(CLIPBOARD_KEY).ok().flatten())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| Clipboard::from_json(&value));
     let app: Shared = Rc::new(RefCell::new(App {
         window,
         document,
@@ -731,6 +778,7 @@ pub fn start() -> Result<(), JsValue> {
         state: State {
             surface,
             installed_grant,
+            clipboard,
             ..State::default()
         },
         client: Client::default(),

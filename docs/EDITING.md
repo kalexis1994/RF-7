@@ -33,6 +33,10 @@ because the smallest surface is two lines high:
 | Pitch envelope | Four rates, four levels |
 | Operators | One page per operator, each with four groups |
 
+An operator can be copied and pasted over another, in the same program or
+in one opened later: the panel's COPY and PASTE keys send the copied fields
+as ordinary edits, so the result previews and saves like any other change.
+
 Each operator's four groups: **Frequency** (fixed mode, coarse, fine, detune),
 **Level** (output level, velocity sensitivity, amplitude modulation
 sensitivity), **Envelope** (four rates, four levels) and **Keyboard scaling**

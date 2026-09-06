@@ -76,7 +76,12 @@ role the algorithm gives it, its frequency as the panel would write it
 glass, then the four rates over the four levels, the output group, the
 frequency group with its FIXED key, and keyboard scaling with the two curve
 key rows. A carrier is amber, from its top edge to the trace on its screen to
-the cap of its knobs; a modulator is blue.
+the cap of its knobs; a modulator is blue. Each header also carries COPY and
+PASTE: COPY takes the operator as it shows, PASTE lays the copied one over
+this operator — every field the program has, only where the value would
+change — and its lamp is lit while there is something to paste. The copy
+lives in the surface, so it can be pasted into another program, or after the
+window has been closed and opened.
 
 **PERFORM** — the twenty-six public parameters, grouped as the plugin's own
 schema groups them, so a parameter added to the plugin appears here without a

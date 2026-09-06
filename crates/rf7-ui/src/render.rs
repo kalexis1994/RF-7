@@ -745,8 +745,21 @@ fn operator(state: &State, draft: &Draft, n: usize, carrier: bool) -> String {
             )
         })
         .unwrap_or_default();
+    // COPY takes this operator; PASTE lays the copied one over it. The lamp
+    // on PASTE says there is something to paste.
+    let clipboard = state.clipboard.as_ref();
+    let can_paste = clipboard.is_some() && !state.comparing;
+    let keys = format!(
+        "<button type=\"button\" class=\"key mini\" data-action=\"copy-op\" data-op=\"{n}\" title=\"Copy OP{n}\"><span class=\"led\"></span>COPY</button><button type=\"button\" class=\"key mini{}\" data-action=\"paste-op\" data-op=\"{n}\" title=\"{}\"{}><span class=\"led\"></span>PASTE</button>",
+        if can_paste { " lit" } else { "" },
+        match clipboard {
+            Some(clipboard) => format!("Paste OP{} over OP{n}", clipboard.source),
+            None => "Nothing copied yet".to_owned(),
+        },
+        if can_paste { "" } else { " disabled" }
+    );
     let mut out = format!(
-        "<section class=\"{class}\" data-op=\"{n}\"><header><span class=\"badge\">OP{n}</span><span class=\"role\">{role}</span><span class=\"freq\">{}</span><span class=\"out\">{}</span>{switch}</header><div class=\"screen\">{}</div>",
+        "<section class=\"{class}\" data-op=\"{n}\"><header><span class=\"badge\">OP{n}</span><span class=\"role\">{role}</span><span class=\"freq\">{}</span><span class=\"out\">{}</span>{switch}{keys}</header><div class=\"screen\">{}</div>",
         esc(&frequency),
         integer(state, &f("out")),
         envelope_svg(rates, levels, false)
@@ -1199,6 +1212,20 @@ mod tests {
             "only the operators the schema names"
         );
         assert_eq!(html.matches("class=\"op ").count(), 6);
+        // Every card can be copied; nothing can be pasted until one has.
+        assert_eq!(html.matches("data-action=\"copy-op\"").count(), 6);
+        assert!(html.contains(
+            "data-action=\"paste-op\" data-op=\"3\" title=\"Nothing copied yet\" disabled"
+        ));
+        let mut copied = state.clone();
+        copied.clipboard = copied.copy_operator(1);
+        let html = page(&copied);
+        assert!(html.contains("class=\"key mini lit\" data-action=\"paste-op\" data-op=\"3\" title=\"Paste OP1 over OP3\">"));
+        copied.comparing = true;
+        assert!(
+            page(&copied).contains("title=\"Paste OP1 over OP3\" disabled"),
+            "not while comparing"
+        );
         assert!(html.contains("class=\"op carrier\" data-op=\"1\""));
         assert!(html.contains("class=\"op modulator\" data-op=\"2\""));
         assert!(html.contains("data-field=\"op1.coarse\""));

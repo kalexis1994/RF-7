@@ -4,7 +4,7 @@
 //! becomes an empty list, not a crash — and strict on the way out: the state
 //! a renderer sees is fully typed.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -187,6 +187,36 @@ pub struct Grant {
     pub resource: String,
 }
 
+/// An operator copied from a program: every field under `opN.`, by its
+/// suffix, so it can be pasted over any operator of any program. It lives in
+/// the surface and in the browser's storage, not in the host.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Clipboard {
+    pub source: usize,
+    pub fields: BTreeMap<String, FieldValue>,
+}
+
+impl Clipboard {
+    pub fn to_json(&self) -> Value {
+        let fields: serde_json::Map<String, Value> = self
+            .fields
+            .iter()
+            .map(|(suffix, value)| (suffix.clone(), value.to_json()))
+            .collect();
+        json!({"source": self.source, "fields": fields})
+    }
+
+    pub fn from_json(value: &Value) -> Option<Self> {
+        let source = value["source"].as_u64()? as usize;
+        let fields = value["fields"]
+            .as_object()?
+            .iter()
+            .filter_map(|(suffix, value)| Some((suffix.clone(), FieldValue::from_json(value)?)))
+            .collect();
+        Some(Self { source, fields })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
     pub connected: bool,
@@ -220,6 +250,8 @@ pub struct State {
     /// The grant SETUP installed last, so the cartridge can be named. The
     /// host reports only that something is installed.
     pub installed_grant: Option<String>,
+    /// The operator copied last, if any.
+    pub clipboard: Option<Clipboard>,
 }
 
 impl State {
@@ -329,6 +361,38 @@ impl State {
             .iter()
             .filter(|(id, opened)| draft.fields.get(*id).is_some_and(|f| f.value != **opened))
             .map(|(id, opened)| (id.clone(), opened.clone()))
+            .collect()
+    }
+
+    /// Operator `n` of the open program, as it shows now, ready to paste.
+    pub fn copy_operator(&self, n: usize) -> Option<Clipboard> {
+        let draft = self.draft.as_ref()?;
+        let prefix = format!("op{n}.");
+        let fields: BTreeMap<String, FieldValue> = draft
+            .fields
+            .keys()
+            .filter_map(|id| {
+                let suffix = id.strip_prefix(&prefix)?;
+                Some((suffix.to_owned(), self.field_value(id)?))
+            })
+            .collect();
+        (!fields.is_empty()).then_some(Clipboard { source: n, fields })
+    }
+
+    /// The edits that paste the clipboard over operator `n`: only the fields
+    /// the open program has, and only where the value would change.
+    pub fn paste_plan(&self, n: usize) -> Vec<(String, FieldValue)> {
+        let (Some(clipboard), Some(draft)) = (&self.clipboard, &self.draft) else {
+            return Vec::new();
+        };
+        clipboard
+            .fields
+            .iter()
+            .filter_map(|(suffix, value)| {
+                let id = format!("op{n}.{suffix}");
+                draft.fields.contains_key(&id).then_some(())?;
+                (self.field_value(&id).as_ref() != Some(value)).then(|| (id, value.clone()))
+            })
             .collect()
     }
 
@@ -795,6 +859,43 @@ pub(crate) mod tests {
             "an entry without an id is not a grant"
         );
         assert_eq!(state.grants[0].name, "ROM1A.syx");
+    }
+
+    #[test]
+    fn an_operator_copies_by_suffix_and_pastes_only_what_would_change() {
+        let mut state = State::default();
+        state.apply_context(&context(), "org.rackforge.rf7");
+        let copied = state.copy_operator(1).expect("op1 has a field");
+        assert_eq!(copied.source, 1);
+        assert_eq!(copied.fields.get("coarse"), Some(&FieldValue::Integer(1)));
+        assert_eq!(state.copy_operator(2), None, "the fixture has no op2");
+        // Round trip through the browser's storage.
+        let json = copied.to_json();
+        assert_eq!(Clipboard::from_json(&json), Some(copied.clone()));
+        state.clipboard = Some(copied);
+        assert!(state.paste_plan(1).is_empty(), "nothing would change");
+        assert!(
+            state.paste_plan(2).is_empty(),
+            "no op2 fields to paste into"
+        );
+        state
+            .clipboard
+            .as_mut()
+            .unwrap()
+            .fields
+            .insert("coarse".into(), FieldValue::Integer(5));
+        assert_eq!(
+            state.paste_plan(1),
+            vec![("op1.coarse".to_owned(), FieldValue::Integer(5))]
+        );
+        // A field the program lacks is skipped rather than sent.
+        state
+            .clipboard
+            .as_mut()
+            .unwrap()
+            .fields
+            .insert("nothing".into(), FieldValue::Integer(1));
+        assert_eq!(state.paste_plan(1).len(), 1);
     }
 
     #[test]

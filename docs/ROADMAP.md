@@ -51,6 +51,11 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- COPY and PASTE on every operator card, the way the instrument's panel had
+  them: the copied operator is kept by the surface, so it can be pasted over
+  any operator of any program, and it goes in as ordinary edits — only the
+  fields the program has, only where the value would change — so it
+  previews, compares and saves like anything else.
 - Detune as measured on the instrument. The firmware only passes the EGS a
   sign and a magnitude, so the step's size comes from the Dexed author's
   measurements of a DX7: `0.0209 / 7 × log2(f) × e^(−0.396 log2 f)` octaves

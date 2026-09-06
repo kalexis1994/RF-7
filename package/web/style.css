@@ -867,11 +867,24 @@ h1, h2, h3, p { margin: 0; }
 
 .op header {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 8px;
 }
+
+/* COPY and PASTE, small enough for a header; PASTE's lamp says there is an
+   operator to paste. */
+.key.mini {
+  min-width: 0;
+  height: 24px;
+  padding: 0 8px;
+  gap: 5px;
+  font-size: 8px;
+  letter-spacing: 0.14em;
+}
+
+.key.mini .led { width: 6px; height: 6px; }
 
 /* The operator's own switch, small enough for a header. */
 .sw.mini {
