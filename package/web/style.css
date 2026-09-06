@@ -873,6 +873,21 @@ h1, h2, h3, p { margin: 0; }
   margin-bottom: 8px;
 }
 
+/* The points on an envelope's screen: the end of each segment, dragged up
+   and down for its level and sideways for its rate. */
+.env .pt {
+  fill: #040805;
+  stroke: var(--lcd-ink);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: move;
+  touch-action: none;
+}
+
+.env .pt:hover { r: 4.5; }
+.op.carrier .env .pt { stroke: var(--amber-hot); }
+[data-comparing="true"] .env .pt { pointer-events: none; }
+
 /* COPY and PASTE, small enough for a header; PASTE's lamp says there is an
    operator to paste. */
 .key.mini {

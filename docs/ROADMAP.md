@@ -51,6 +51,10 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- Envelopes shaped on the glass. The end of each segment is a point on the
+  screen — the operators' and the pitch envelope's — that drags up and down
+  for the level and sideways for the rate, with the trace redrawn under the
+  pointer and every step sent as the same edit the knobs send.
 - The library exported as bulk dumps. The host has no way to hand a file to
   the user, but it writes every artifact of a save into the plugin's own
   folder, so every save now rewrites `exports/rf7-programs-N.syx` — the

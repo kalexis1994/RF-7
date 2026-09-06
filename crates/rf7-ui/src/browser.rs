@@ -25,6 +25,9 @@ const POLL_MS: f64 = 3000.0;
 const KNOB_THROW: f64 = 180.0;
 /// With Shift held the same travel covers a tenth of the range.
 const FINE: f64 = 10.0;
+/// Rate steps per unit of the envelope drawing's width when a point is
+/// dragged sideways: a pull across the whole drawing covers the dial.
+const ENVELOPE_RATE_PER_UNIT: f64 = 0.42;
 
 /// A knob under the pointer: the pointer, its input, where it started.
 struct Drag {
@@ -37,6 +40,26 @@ struct Drag {
     fine: bool,
 }
 
+/// An envelope point under the pointer: which envelope and segment, where
+/// the drag began, and the scale of the drawing under the pointer.
+struct EnvelopeDrag {
+    pointer: i32,
+    /// The lit screen the drawing sits in; the drawing itself is replaced as
+    /// the point moves, so the pointer is captured here.
+    screen: Element,
+    binding: String,
+    segment: usize,
+    pitch: bool,
+    start_x: f64,
+    start_y: f64,
+    start_rate: i64,
+    start_level: i64,
+    /// Drawing units per pixel, each way.
+    unit_x: f64,
+    unit_y: f64,
+    moved: bool,
+}
+
 struct App {
     window: Window,
     document: Document,
@@ -47,6 +70,7 @@ struct App {
     last_poll: f64,
     info: Option<String>,
     drag: Option<Drag>,
+    envelope: Option<EnvelopeDrag>,
     /// The grant an install request is carrying, until the host answers.
     installing: Option<String>,
 }
@@ -124,6 +148,7 @@ impl App {
             // name being typed — keeps its section; the values around it are
             // refreshed in place instead.
             let busy = self.drag.is_some()
+                || self.envelope.is_some()
                 || active.as_ref().is_some_and(|el| {
                     matches!(el.tag_name().as_str(), "INPUT" | "SELECT")
                         && el.closest(&format!("#{name}")).ok().flatten().is_some()
@@ -522,6 +547,56 @@ impl App {
         self.set_knob(&input, raw, preview);
     }
 
+    /// Move the envelope point under the pointer: the level follows the
+    /// pointer's height, the rate its travel sideways. The drawing is redrawn
+    /// in place as it goes, and the host hears every step.
+    fn drag_envelope_to(&mut self, x: f64, y: f64, preview: bool) {
+        let Some(drag) = &mut self.envelope else {
+            return;
+        };
+        let rate = (drag.start_rate as f64
+            - (x - drag.start_x) * drag.unit_x * ENVELOPE_RATE_PER_UNIT)
+            .round()
+            .clamp(0.0, 99.0) as i64;
+        let level = (drag.start_level as f64
+            + (drag.start_y - y) * drag.unit_y * (99.0 / render::ENVELOPE_LEVEL_SPAN))
+            .round()
+            .clamp(0.0, 99.0) as i64;
+        if rate != drag.start_rate || level != drag.start_level {
+            drag.moved = true;
+        }
+        if !drag.moved {
+            return;
+        }
+        let binding = drag.binding.clone();
+        let segment = drag.segment;
+        let pitch = drag.pitch;
+        let screen = drag.screen.clone();
+        for (id, value) in [
+            (format!("{binding}.r{segment}"), rate),
+            (format!("{binding}.l{segment}"), level),
+        ] {
+            let current = self.state.field_value(&id).and_then(|v| v.as_i64());
+            // A preview only when the value moves; the release confirms
+            // whatever the point landed on.
+            if current != Some(value) || !preview {
+                self.edit_field(&id, FieldValue::Integer(value), preview);
+            }
+        }
+        let read = |state: &State, kind: &str| {
+            [1, 2, 3, 4].map(|k| {
+                state
+                    .field_value(&format!("{binding}.{kind}{k}"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+            })
+        };
+        let rates = read(&self.state, "r");
+        let levels = read(&self.state, "l");
+        screen.set_inner_html(&render::envelope_svg(rates, levels, pitch, Some(&binding)));
+        self.pump();
+    }
+
     /// Put a knob at a value — snapped to its step, kept in its range — and
     /// tell the host.
     fn set_knob(&mut self, input: &Element, raw: f64, preview: bool) {
@@ -689,7 +764,56 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
             let mut app = shared.borrow_mut();
             match kind {
                 "pointerdown" => {
-                    if app.drag.is_some() || event.button() != 0 {
+                    if app.drag.is_some() || app.envelope.is_some() || event.button() != 0 {
+                        return;
+                    }
+                    // A point on an envelope's screen.
+                    if let Some(handle) = event
+                        .target()
+                        .and_then(|t| t.dyn_into::<Element>().ok())
+                        .and_then(|t| t.closest("[data-env]").ok().flatten())
+                    {
+                        if app.state.comparing {
+                            return;
+                        }
+                        let (Some(binding), Some(segment), Some(screen), Some(svg)) = (
+                            handle.get_attribute("data-env"),
+                            handle
+                                .get_attribute("data-seg")
+                                .and_then(|s| s.parse::<usize>().ok()),
+                            handle.closest(".screen").ok().flatten(),
+                            handle.closest("svg").ok().flatten(),
+                        ) else {
+                            return;
+                        };
+                        let rect = svg.get_bounding_client_rect();
+                        if rect.width() <= 0.0 || rect.height() <= 0.0 {
+                            return;
+                        }
+                        let field = |kind: &str| {
+                            app.state
+                                .field_value(&format!("{binding}.{kind}{segment}"))
+                                .and_then(|v| v.as_i64())
+                        };
+                        let (Some(start_rate), Some(start_level)) = (field("r"), field("l")) else {
+                            return;
+                        };
+                        let _ = screen.set_pointer_capture(event.pointer_id());
+                        event.prevent_default();
+                        app.envelope = Some(EnvelopeDrag {
+                            pointer: event.pointer_id(),
+                            screen,
+                            pitch: binding == "peg",
+                            binding,
+                            segment,
+                            start_x: f64::from(event.client_x()),
+                            start_y: f64::from(event.client_y()),
+                            start_rate,
+                            start_level,
+                            unit_x: render::ENVELOPE_WIDTH / rect.width(),
+                            unit_y: render::ENVELOPE_HEIGHT / rect.height(),
+                            moved: false,
+                        });
                         return;
                     }
                     let Some(knob) = event
@@ -722,6 +846,16 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
                 }
                 "pointermove" => {
                     if app
+                        .envelope
+                        .as_ref()
+                        .is_some_and(|drag| drag.pointer == event.pointer_id())
+                    {
+                        app.drag_envelope_to(
+                            f64::from(event.client_x()),
+                            f64::from(event.client_y()),
+                            true,
+                        );
+                    } else if app
                         .drag
                         .as_ref()
                         .is_some_and(|drag| drag.pointer == event.pointer_id())
@@ -731,6 +865,18 @@ fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
                 }
                 _ => {
                     if app
+                        .envelope
+                        .as_ref()
+                        .is_some_and(|drag| drag.pointer == event.pointer_id())
+                    {
+                        app.drag_envelope_to(
+                            f64::from(event.client_x()),
+                            f64::from(event.client_y()),
+                            false,
+                        );
+                        app.envelope = None;
+                        app.pump();
+                    } else if app
                         .drag
                         .as_ref()
                         .is_some_and(|drag| drag.pointer == event.pointer_id())
@@ -786,6 +932,7 @@ pub fn start() -> Result<(), JsValue> {
         last_poll: 0.0,
         info: None,
         drag: None,
+        envelope: None,
         installing: None,
     }));
     for kind in ["input", "change", "click"] {

@@ -33,6 +33,11 @@ because the smallest surface is two lines high:
 | Pitch envelope | Four rates, four levels |
 | Operators | One page per operator, each with four groups |
 
+The envelopes on the lit screens can be shaped by hand: the point at the
+end of each segment drags up and down for its level and sideways for its
+rate, the trace redrawn as it moves, and every step goes to the host as the
+same edit the knobs send, so it previews and confirms the same way.
+
 An operator can be copied and pasted over another, in the same program or
 in one opened later: the panel's COPY and PASTE keys send the copied fields
 as ordinary edits, so the result previews and saves like any other change.

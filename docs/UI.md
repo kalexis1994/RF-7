@@ -65,6 +65,9 @@ it does nothing until something has moved.
 
 **VOICE** — the algorithm on lit glass, drawn from the routing table, with a
 stepper, a selector for all thirty-two and the carrier list printed beneath;
+every envelope on lit glass carries a point at the end of each segment,
+which drags up and down for the level and sideways for the rate, the trace
+following as it goes;
 feedback, transpose, pitch-modulation sensitivity and oscillator key sync;
 the LFO with its six waveform keys; and the pitch envelope drawn as a trace
 around its centre line, because a pitch envelope is a deviation, not an

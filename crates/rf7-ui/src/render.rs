@@ -375,7 +375,22 @@ fn integer(state: &State, id: &str) -> i64 {
 
 /// An envelope as a shape on lit glass: four rates and four levels, drawn
 /// from L4 up through L1, L2, L3, a hold, and back down to L4.
-pub fn envelope_svg(rates: [i64; 4], levels: [i64; 4], pitch: bool) -> String {
+/// The width and height of the envelope drawing, in its own units, which the
+/// browser needs to turn a pointer's pixels back into rates and levels.
+pub const ENVELOPE_WIDTH: f64 = 240.0;
+pub const ENVELOPE_HEIGHT: f64 = 64.0;
+/// The vertical span of levels 0..=99 inside that height.
+pub const ENVELOPE_LEVEL_SPAN: f64 = ENVELOPE_HEIGHT - 12.0;
+
+/// The envelope on lit glass. With `handles` — the prefix of its fields,
+/// `op3.eg` or `peg` — the end of each segment is a point that can be
+/// dragged: up and down for the level, left and right for the rate.
+pub fn envelope_svg(
+    rates: [i64; 4],
+    levels: [i64; 4],
+    pitch: bool,
+    handles: Option<&str>,
+) -> String {
     let duration = |rate: i64| 4.0 + ((99 - rate.clamp(0, 99)) as f64).powf(1.6) / 12.0;
     let widths = [
         duration(rates[0]),
@@ -385,9 +400,9 @@ pub fn envelope_svg(rates: [i64; 4], levels: [i64; 4], pitch: bool) -> String {
         duration(rates[3]),
     ];
     let total: f64 = widths.iter().sum();
-    let width = 240.0;
-    let height = 64.0;
-    let y = |level: i64| height - 6.0 - (level.clamp(0, 99) as f64 / 99.0) * (height - 12.0);
+    let width = ENVELOPE_WIDTH;
+    let height = ENVELOPE_HEIGHT;
+    let y = |level: i64| height - 6.0 - (level.clamp(0, 99) as f64 / 99.0) * ENVELOPE_LEVEL_SPAN;
     let mut x = 4.0;
     let mut points = vec![(x, y(levels[3]))];
     for (segment, level) in [levels[0], levels[1], levels[2], levels[2], levels[3]]
@@ -443,6 +458,18 @@ pub fn envelope_svg(rates: [i64; 4], levels: [i64; 4], pitch: bool) -> String {
         "<polyline class=\"line\" points=\"{}\"/>",
         path.join(" ")
     );
+    if let Some(binding) = handles {
+        // Segments 1 to 3 end at points 1 to 3; the hold is point 4 and the
+        // release, segment 4, ends at point 5.
+        for (segment, point) in [(1, 1), (2, 2), (3, 3), (4, 5)] {
+            let (cx, cy) = points[point];
+            let _ = write!(
+                out,
+                "<circle class=\"pt\" data-env=\"{}\" data-seg=\"{segment}\" cx=\"{cx:.1}\" cy=\"{cy:.1}\" r=\"3.5\"/>",
+                esc(binding)
+            );
+        }
+    }
     out.push_str("</svg>");
     out
 }
@@ -620,7 +647,7 @@ fn page_voice(state: &State, draft: &Draft) -> String {
     let levels = [1, 2, 3, 4].map(|s| integer(state, &format!("peg.l{s}")));
     let mut peg = format!(
         "<div class=\"screen wide\">{}</div>",
-        envelope_svg(rates, levels, true)
+        envelope_svg(rates, levels, true, Some("peg"))
     );
     for s in 1..=4 {
         peg.push_str(&field_knob(
@@ -762,7 +789,7 @@ fn operator(state: &State, draft: &Draft, n: usize, carrier: bool) -> String {
         "<section class=\"{class}\" data-op=\"{n}\"><header><span class=\"badge\">OP{n}</span><span class=\"role\">{role}</span><span class=\"freq\">{}</span><span class=\"out\">{}</span>{switch}{keys}</header><div class=\"screen\">{}</div>",
         esc(&frequency),
         integer(state, &f("out")),
-        envelope_svg(rates, levels, false)
+        envelope_svg(rates, levels, false, Some(&f("eg")))
     );
     out.push_str("<h3>ENVELOPE</h3><div class=\"row four\">");
     for s in 1..=4 {
@@ -1399,11 +1426,18 @@ mod tests {
 
     #[test]
     fn envelopes_are_drawn_from_their_numbers() {
-        let fast = envelope_svg([99, 99, 99, 99], [99, 99, 99, 0], false);
-        let slow = envelope_svg([0, 0, 0, 0], [99, 99, 99, 0], false);
+        let fast = envelope_svg([99, 99, 99, 99], [99, 99, 99, 0], false, None);
+        let slow = envelope_svg([0, 0, 0, 0], [99, 99, 99, 0], false, None);
+        assert!(
+            !fast.contains("class=\"pt\""),
+            "no handles without a binding"
+        );
+        let handled = envelope_svg([99, 99, 99, 99], [99, 99, 99, 0], false, Some("op2.eg"));
+        assert_eq!(handled.matches("class=\"pt\"").count(), 4);
+        assert!(handled.contains("data-env=\"op2.eg\" data-seg=\"4\""));
         assert!(fast.contains("<polyline"));
         assert_ne!(fast, slow);
-        let pitch = envelope_svg([50; 4], [50; 4], true);
+        let pitch = envelope_svg([50; 4], [50; 4], true, None);
         assert!(pitch.contains("class=\"mid\""));
         assert!(
             !pitch.contains("<polygon"),
