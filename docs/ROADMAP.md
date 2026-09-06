@@ -51,6 +51,13 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- Detune as measured on the instrument. The firmware only passes the EGS a
+  sign and a magnitude, so the step's size comes from the Dexed author's
+  measurements of a DX7: `0.0209 / 7 × log2(f) × e^(−0.396 log2 f)` octaves
+  a step at a key of `f` hertz — 2.6 cents at A0, 1.2 at middle C, half a
+  cent at C7 — applied at the key sounded for every operator of the note.
+  The constant 1.7 cents a step is gone; the brass and string ensembles
+  still beat beside the cartridges' own.
 - The LFO on the firmware's own arithmetic. Speed: the scaled dial times
   eleven into a sixteen-bit phase word every tick, the multiplier climbing
   from a scaled 160 up, which is 0.063 Hz at 0 and 49.5 at 99 on the

@@ -6,8 +6,8 @@ use crate::{
     envelope::Envelope,
     sine::Sine,
     tables::{
-        amp_mod_units, fixed_frequency, key_level_offset, level_gain, operator_ratio,
-        pitch_eg_semitones, scale_output_level, velocity_offset,
+        amp_mod_units, detune_factor, fixed_frequency, key_level_offset, level_gain,
+        operator_ratio, pitch_eg_semitones, scale_output_level, velocity_offset,
     },
 };
 use rf7_voice::Voice;
@@ -236,9 +236,10 @@ impl NoteVoice {
                 Envelope::operator(operator, note, ceiling, setup.envelope_time, sample_rate);
             self.fixed[index] = operator.fixed_frequency;
             let operator_hertz = if operator.fixed_frequency {
-                fixed_frequency(operator)
+                let fixed = fixed_frequency(operator);
+                fixed * detune_factor(operator.detune, fixed)
             } else {
-                hertz * operator_ratio(operator)
+                hertz * operator_ratio(operator) * detune_factor(operator.detune, hertz)
             };
             self.increments[index] = (operator_hertz / f64::from(sample_rate)) as f32;
             self.amp_mod[index] = amp_mod_units(operator.amp_mod_sensitivity);
@@ -296,7 +297,8 @@ impl NoteVoice {
                 continue;
             }
             self.increments[index] =
-                ((hertz * operator_ratio(operator)) / f64::from(sample_rate)) as f32;
+                ((hertz * operator_ratio(operator) * detune_factor(operator.detune, hertz))
+                    / f64::from(sample_rate)) as f32;
         }
         // Wherever the old note was sounding is where the new one starts, so
         // the pitch does not step as the target changes under it.

@@ -27,7 +27,7 @@ and [`crates/rf7-dsp/src/algorithm.rs`](../crates/rf7-dsp/src/algorithm.rs).
 | Fine adds hundredths of the coarse ratio | Documented | |
 | Fixed mode is four decades from 1 Hz, `10^(coarse mod 4 + fine/100)` | Documented | |
 | Transpose byte 24 is centre | Documented | |
-| Detune step ≈ 1.7 cents | **Approximate** | Applied as a constant factor in the logarithmic domain. On the real instrument detune is a fixed increment on the phase accumulator, so it is a larger interval on low notes than on high ones. Not yet modelled. |
+| Detune | Measured on a DX7, by the Dexed project | The firmware hands the EGS a sign and a magnitude (`TABLE_DETUNE_VALUE`) and the chip applies it, so no table says how far a step goes. The Dexed author measured a DX7 and fitted one step to `0.0209 / 7 × log2(f) × e^(−0.396 log2 f)` octaves at a key of `f` hertz: 2.6 cents at A0, 1.2 at middle C, half a cent at C7 — the beat between two detuned operators grows with pitch, but more slowly than the pitch. RF-7 applies that curve at the key sounded, the same for every operator of the note as the measurement was made, and gives a fixed operator the curve at its own frequency. It replaces a constant 1.7 cents a step. |
 | Pitch bend range | Documented, but not from the voice | It lives in the DX7's function parameters, not in a patch, so RF-7 exposes it as a control. See below. |
 
 ## Level

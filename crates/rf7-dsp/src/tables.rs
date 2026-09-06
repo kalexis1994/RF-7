@@ -70,8 +70,16 @@ const SCALING_CURVE_LIN: [u8; 36] = [
     0x80, 0x88, 0x90, 0x98, 0xA0, 0xA8, 0xB2, 0xB8, 0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8,
     0xFF, 0xFF, 0xFF, 0xFF,
 ];
-/// One detune step, in octaves. About 1.7 cents.
-const DETUNE_OCTAVES: f64 = 0.001_417;
+/// Detune, measured rather than read. The firmware only hands the EGS a
+/// sign and a magnitude, and the chip applies it, so no table says how far
+/// a step goes. The Dexed project's author measured a DX7 and fitted one
+/// step to `0.0209 / 7 × log2(f) × e^(−0.396 × log2(f))` octaves at a key
+/// of `f` hertz: 2.6 cents at A0, 1.2 at middle C, half a cent at C7. The
+/// beat between two detuned operators therefore grows with pitch, but more
+/// slowly than the pitch does — it is neither a fixed interval nor a fixed
+/// number of hertz.
+const DETUNE_FIT_SCALE: f64 = 0.0209 / 7.0;
+const DETUNE_FIT_DECAY: f64 = 0.396;
 /// The firmware's pitch envelope level table, verbatim: a level 0..=99 to a
 /// byte whose top seven bits sit in the voice's pitch word. 128 is the
 /// centre; the table is one step a level through the middle and steepens at
@@ -248,10 +256,11 @@ pub fn velocity_offset(velocity: u8, sensitivity: u8) -> f32 {
     (VELOCITY_REFERENCE - attenuation) as f32 * SIXTEENTH_OCTAVE
 }
 
-/// The frequency ratio of a key-tracking operator.
+/// The frequency ratio of a key-tracking operator, before its detune.
 ///
 /// Coarse 0 is the half ratio, not silence; fine adds hundredths of the coarse
-/// ratio; detune is a fixed small offset in the logarithmic domain.
+/// ratio. Detune is applied by [`detune_factor`], because how far a step goes
+/// depends on the key.
 pub fn operator_ratio(operator: &Operator) -> f64 {
     let coarse = if operator.coarse == 0 {
         0.5
@@ -259,18 +268,28 @@ pub fn operator_ratio(operator: &Operator) -> f64 {
         f64::from(operator.coarse.min(31))
     };
     let fine = 1.0 + f64::from(operator.fine.min(99)) / 100.0;
-    coarse * fine * detune_factor(operator.detune)
+    coarse * fine
 }
 
-/// The frequency of a fixed operator, in hertz. Four decades from 1 Hz.
+/// The frequency of a fixed operator, in hertz, before its detune. Four
+/// decades from 1 Hz.
 pub fn fixed_frequency(operator: &Operator) -> f64 {
     let decade = f64::from(operator.coarse & 3);
     let fraction = f64::from(operator.fine.min(99)) / 100.0;
-    10f64.powf(decade + fraction) * detune_factor(operator.detune)
+    10f64.powf(decade + fraction)
 }
 
-fn detune_factor(detune: u8) -> f64 {
-    ((f64::from(detune.min(14)) - 7.0) * DETUNE_OCTAVES).exp2()
+/// How far a detune of 0..=14 (7 is none) moves an operator, in octaves,
+/// when the key sounding is `key_hertz`. A fixed operator passes its own
+/// frequency, which is the nearest thing it has to a key.
+pub fn detune_octaves(detune: u8, key_hertz: f64) -> f64 {
+    let log2 = key_hertz.max(1.0).log2();
+    (f64::from(detune.min(14)) - 7.0) * DETUNE_FIT_SCALE * log2 * (-DETUNE_FIT_DECAY * log2).exp()
+}
+
+/// [`detune_octaves`] as a factor on the frequency.
+pub fn detune_factor(detune: u8, key_hertz: f64) -> f64 {
+    detune_octaves(detune, key_hertz).exp2()
 }
 
 /// The firmware's LFO phase increment for a speed 0..=99: added to a
@@ -573,14 +592,10 @@ mod tests {
         assert!((operator_ratio(&operator) - 14.0).abs() < 1e-9);
         operator.fine = 50;
         assert!((operator_ratio(&operator) - 21.0).abs() < 1e-9);
-        // Detune moves either side of centre and by the same factor.
+        // The ratio is the panel's alone; detune is applied at the key.
         operator.fine = 0;
-        operator.detune = 8;
-        let up = operator_ratio(&operator);
-        operator.detune = 6;
-        let down = operator_ratio(&operator);
-        assert!(up > 14.0 && down < 14.0);
-        assert!((up * down - 196.0).abs() < 1e-6);
+        operator.detune = 14;
+        assert!((operator_ratio(&operator) - 14.0).abs() < 1e-9);
         // A fixed operator ignores the coarse decades above three.
         operator.detune = 7;
         operator.fixed_frequency = true;
@@ -590,6 +605,27 @@ mod tests {
         assert!((fixed_frequency(&operator) - 1000.0).abs() < 1e-6);
         operator.coarse = 7;
         assert!((fixed_frequency(&operator) - 1000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn detune_is_the_measured_curve_and_shrinks_with_pitch() {
+        let cents = |detune: u8, hertz: f64| detune_octaves(detune, hertz) * 1200.0;
+        assert_eq!(cents(7, 261.63), 0.0);
+        // One step: about 2.6 cents at A0, 1.2 at middle C, half at C7.
+        assert!((cents(8, 27.5) - 2.6).abs() < 0.2, "{}", cents(8, 27.5));
+        assert!((cents(8, 261.63) - 1.2).abs() < 0.1, "{}", cents(8, 261.63));
+        assert!((cents(8, 2093.0) - 0.5).abs() < 0.1, "{}", cents(8, 2093.0));
+        // Symmetric about the centre, and seven steps each way.
+        assert_eq!(cents(6, 440.0), -cents(8, 440.0));
+        assert!((cents(14, 440.0) - 7.0 * cents(8, 440.0)).abs() < 1e-9);
+        assert!((detune_factor(8, 440.0) * detune_factor(6, 440.0) - 1.0).abs() < 1e-12);
+        // The beat in hertz still grows with pitch, just more slowly.
+        let beat = |hertz: f64| hertz * (detune_factor(8, hertz) - 1.0);
+        assert!(beat(261.63) > beat(27.5) && beat(2093.0) > beat(261.63));
+        assert!(
+            beat(2093.0) < beat(27.5) * 76.0,
+            "not proportional to pitch"
+        );
     }
 
     #[test]
