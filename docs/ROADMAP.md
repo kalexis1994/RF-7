@@ -51,6 +51,13 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- The library exported as bulk dumps. The host has no way to hand a file to
+  the user, but it writes every artifact of a save into the plugin's own
+  folder, so every save now rewrites `exports/rf7-programs-N.syx` — the
+  saved programs in catalog order, thirty-two to a bank — and, while the
+  factory library plays, `exports/rf7-factory-1.syx` and `-2.syx`. SETUP
+  says where. A program made here, or the bank itself, gets to a cartridge
+  or to another instrument without leaving RackForge.
 - COPY and PASTE on every operator card, the way the instrument's panel had
   them: the copied operator is kept by the surface, so it can be pasted over
   any operator of any program, and it goes in as ordinary edits — only the

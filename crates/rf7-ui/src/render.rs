@@ -544,7 +544,7 @@ fn page_config(state: &State) -> String {
     let mut about = String::new();
     let _ = write!(
         about,
-        "<dl class=\"facts\"><dt>PLUGIN</dt><dd>RF-7 {}</dd><dt>SAVED PROGRAMS</dt><dd>{}</dd><dt>HOST</dt><dd>{}</dd></dl>",
+        "<dl class=\"facts\"><dt>PLUGIN</dt><dd>RF-7 {}</dd><dt>SAVED PROGRAMS</dt><dd>{}</dd><dt>HOST</dt><dd>{}</dd><dt>EXPORTS</dt><dd>On every save, under RackForge's data folder: plugins/org.rackforge.rf7/exports/rf7-programs-1.syx and, while the factory bank plays, rf7-factory-1.syx and -2.syx</dd></dl>",
         env!("CARGO_PKG_VERSION"),
         state.instance.as_ref().map_or(0, |instance| instance
             .sounds

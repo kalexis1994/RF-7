@@ -8,7 +8,9 @@ use rackforge_program_api::{
     ProgramEditorPage, ProgramEditorValue, ProgramEditorView, ProgramFieldEditRequest,
 };
 use rf7_plugin::{RESOURCE_CARTRIDGE, Rf7Processor, TRANSFER_BYTES};
-use rf7_voice::{VOICES_PER_CARTRIDGE, decode_voice_dump, encode_packed, factory_voice};
+use rf7_voice::{
+    VOICES_PER_CARTRIDGE, decode_library, decode_voice_dump, encode_packed, factory_voice,
+};
 
 const FRAMES: u32 = 128;
 
@@ -151,7 +153,10 @@ fn a_library_voice_opens_as_a_copy_and_the_view_covers_the_whole_voice() {
     assert_eq!(opened.document.id, "user.rf7-001", "a copy gets a new id");
     assert_eq!(opened.preview_sound_id, "custom.user.rf7-001");
     assert_eq!(opened.document.plugin_id, "org.rackforge.rf7");
-    assert_eq!(opened.artifacts.len(), 1);
+    assert!(
+        opened.artifacts.len() >= 2,
+        "the voice's own dump and the bank exports"
+    );
     assert!(opened.artifacts[0].storage_path.ends_with(".syx"));
     let dump = decode_voice_dump(&opened.artifacts[0].bytes).expect("a valid voice dump");
     assert_eq!(dump.voice, factory_voice(3));
@@ -303,6 +308,75 @@ fn a_saved_program_reopens_under_its_own_id_and_a_new_one_starts_from_init() {
     assert_eq!(
         processor.begin_program_edit(&source, &mut [0u8; 1024]),
         None
+    );
+}
+
+#[test]
+fn every_save_leaves_the_saved_programs_and_the_factory_bank_as_bulk_dumps() {
+    let mut processor = prepared();
+    let opened = begin(&mut processor, Some("program-001"));
+    let saved = save(&mut processor, &opened.document);
+    let paths: Vec<&str> = saved
+        .artifacts
+        .iter()
+        .map(|a| a.storage_path.as_str())
+        .collect();
+    // The single voice, one bank of saved programs, and the factory
+    // library's thirty-two and six.
+    assert_eq!(
+        paths,
+        [
+            "programs/user-rf7-001.syx",
+            "exports/rf7-programs-1.syx",
+            "exports/rf7-factory-1.syx",
+            "exports/rf7-factory-2.syx",
+        ]
+    );
+    let programs = decode_library(&saved.artifacts[1].bytes).expect("a valid bulk dump");
+    assert_eq!(programs.len(), VOICES_PER_CARTRIDGE);
+    assert_eq!(
+        rf7_voice::printable_name(&programs.voice(0).unwrap().name).trim(),
+        "RF TINES",
+        "the program just saved is the first voice of the bank"
+    );
+    assert_eq!(
+        rf7_voice::printable_name(&programs.voice(1).unwrap().name).trim(),
+        "INIT VOICE",
+        "and the rest of the bank is padding"
+    );
+    let factory = decode_library(&saved.artifacts[2].bytes).unwrap();
+    assert_eq!(factory.voice(0), Some(&factory_voice(0)));
+    let second = decode_library(&saved.artifacts[3].bytes).unwrap();
+    assert_eq!(second.voice(5), Some(&factory_voice(37)));
+    assert_eq!(
+        rf7_voice::printable_name(&second.voice(6).unwrap().name).trim(),
+        "INIT VOICE"
+    );
+
+    // A second save keeps the first program in its slot and adds the next;
+    // with a cartridge installed the factory banks are not written.
+    let mut bank = Vec::new();
+    for _ in 0..VOICES_PER_CARTRIDGE {
+        bank.extend_from_slice(&encode_packed(&factory_voice(9)));
+    }
+    assert!(processor.begin_resource(RESOURCE_CARTRIDGE, bank.len() as u64));
+    assert!(processor.write_resource(0, &bank));
+    assert!(processor.end_resource());
+    let opened = begin(&mut processor, None);
+    let saved = save(&mut processor, &opened.document);
+    let paths: Vec<&str> = saved
+        .artifacts
+        .iter()
+        .map(|a| a.storage_path.as_str())
+        .collect();
+    assert_eq!(
+        paths,
+        ["programs/user-rf7-002.syx", "exports/rf7-programs-1.syx"]
+    );
+    let programs = decode_library(&saved.artifacts[1].bytes).unwrap();
+    assert_eq!(
+        rf7_voice::printable_name(&programs.voice(1).unwrap().name).trim(),
+        "RF NEW"
     );
 }
 

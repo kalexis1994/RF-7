@@ -74,6 +74,13 @@ reports only that a cartridge is installed, so the surface remembers which of
 those files it installed last and prints its name as the source, with its pad
 lit, for as long as the host still lists it.
 
+Going the other way — RF-7's programs, or its factory bank, as a cartridge —
+happens with every save: the host writes `exports/rf7-programs-N.syx` and,
+while the factory bank plays, `exports/rf7-factory-1.syx` and `-2.syx` under
+`plugins/org.rackforge.rf7/` in its data folder. SETUP says so. They are
+ordinary thirty-two-voice bulk dumps, so they load into a DX7, into RF-7
+itself, or into anything that reads the format.
+
 Setting the library up is not something to reach for while playing, which is
 why it is a surface of its own: RackForge keeps program selection and voice
 editing in PLAY, and libraries, resources and diagnostics in CONFIG.

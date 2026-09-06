@@ -285,11 +285,47 @@ impl Rf7Processor {
         }
         voice.name = pad_name(document.name.trim());
         let preview = format!("{}{}", programs::PREFIX, document.id);
-        Some(document::prepared(
+        let mut prepared = document::prepared(
             document::document_with_id_and_name(&document.id, &document.name, &voice),
             &preview,
             &voice,
-        ))
+        );
+        prepared
+            .artifacts
+            .extend(self.export_artifacts(&document.id, &voice));
+        Some(prepared)
+    }
+
+    /// The saved programs as they will stand once `id` is saved as `voice`,
+    /// and the factory library while it is the library, as DX7 bulk dumps
+    /// for the host to write beside the save: the way a program made here,
+    /// or the bank itself, gets to a cartridge or to another instrument.
+    fn export_artifacts(&self, id: &str, voice: &Voice) -> Vec<document::ProgramArtifact> {
+        let mut saved: Vec<Voice> = self
+            .custom
+            .entries()
+            .iter()
+            .map(|program| {
+                let mut voice = program.voice;
+                voice.name = pad_name(&program.name);
+                voice
+            })
+            .collect();
+        match self.custom.entries().iter().position(|p| p.id == id) {
+            Some(slot) => saved[slot] = *voice,
+            None => saved.push(*voice),
+        }
+        let mut artifacts = document::export_artifacts("rf7-programs", &saved);
+        let factory = self.library.len() == rf7_voice::FACTORY_VOICES
+            && (0..rf7_voice::FACTORY_VOICES)
+                .all(|i| self.library.voice(i) == Some(&rf7_voice::factory_voice(i)));
+        if factory {
+            let voices: Vec<Voice> = (0..rf7_voice::FACTORY_VOICES)
+                .map(rf7_voice::factory_voice)
+                .collect();
+            artifacts.extend(document::export_artifacts("rf7-factory", &voices));
+        }
+        artifacts
     }
 }
 

@@ -12,7 +12,8 @@
 //! be a rejected save.
 
 use rf7_voice::{
-    Curve, LfoWaveform, NAME_LENGTH, OPERATORS, Operator, Voice, encode_voice_dump, printable_name,
+    Cartridge, Curve, LfoWaveform, NAME_LENGTH, OPERATORS, Operator, VOICES_PER_CARTRIDGE, Voice,
+    encode_bulk_dump, encode_voice_dump, printable_name,
 };
 use serde::{Deserialize, Serialize};
 
@@ -384,6 +385,30 @@ pub fn voice_of(document: &ProgramDocument) -> Option<Voice> {
     payload.to_voice()
 }
 
+/// The media type of a DX7 System Exclusive file.
+const SYSEX_MEDIA_TYPE: &str = "application/x-yamaha-dx7-sysex";
+
+/// A library as the bulk dumps a DX7 accepts: thirty-two voices to a bank,
+/// the last bank padded with INIT VOICE, each written as
+/// `exports/<stem>-<n>.syx`. This is how RF-7 exports: the host keeps every
+/// artifact of a save in the plugin's own folder, so the banks are written
+/// afresh beside every saved program and are there on disk to be taken.
+pub fn export_artifacts(stem: &str, voices: &[Voice]) -> Vec<ProgramArtifact> {
+    voices
+        .chunks(VOICES_PER_CARTRIDGE)
+        .enumerate()
+        .map(|(index, chunk)| {
+            let mut bank = [Voice::init(); VOICES_PER_CARTRIDGE];
+            bank[..chunk.len()].copy_from_slice(chunk);
+            ProgramArtifact {
+                storage_path: format!("exports/{stem}-{}.syx", index + 1),
+                media_type: SYSEX_MEDIA_TYPE.to_owned(),
+                bytes: encode_bulk_dump(&Cartridge::from_voices(bank), 0).to_vec(),
+            }
+        })
+        .collect()
+}
+
 /// What the host commits: the document, where it goes, what to preview, and
 /// the voice as a single-voice System Exclusive dump beside it — the same
 /// bytes a DX7 would accept, so a program edited here can go to hardware.
@@ -399,7 +424,7 @@ pub fn prepared(
         preview_sound_id: preview_sound_id.to_owned(),
         artifacts: vec![ProgramArtifact {
             storage_path: format!("programs/{stem}.syx"),
-            media_type: "application/x-yamaha-dx7-sysex".to_owned(),
+            media_type: SYSEX_MEDIA_TYPE.to_owned(),
             bytes: encode_voice_dump(voice, 0).to_vec(),
         }],
         document,

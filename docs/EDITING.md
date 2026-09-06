@@ -70,6 +70,15 @@ is the format a DX7 accepts over MIDI, so a program made here can go to
 hardware or to any other instrument that reads the format. The name in the
 dump is the first ten characters of the name you gave the program.
 
+Every save also rewrites the **bulk dumps**: `exports/rf7-programs-1.syx`
+holds the saved programs in catalog order, thirty-two to a bank and the last
+bank padded with INIT VOICE, and while the factory library is playing
+`exports/rf7-factory-1.syx` and `-2.syx` hold its thirty-eight voices. The
+host keeps every artifact of a save in the plugin's own folder under its data
+root, so the banks are on disk to be taken to a cartridge or another
+instrument; a program deleted in the host stays in the bank until the next
+save.
+
 Saved programs appear in the catalog after the library, in a bank of their
 own, marked editable so the host offers to reopen them. Installing a different
 cartridge later replaces the library and leaves them where they are. A session
