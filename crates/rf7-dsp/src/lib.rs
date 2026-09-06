@@ -1346,8 +1346,10 @@ mod tests {
             "the rate moved nothing"
         );
 
-        // ...and the delay holds it off, so the first fiftieth of a second is
-        // the unmodulated note and only later does it part from it.
+        // ...and the delay holds it off, so the first tenth of a second is
+        // the unmodulated note and only later does it part from it. (Even
+        // with no delay the instrument waits a few dozen milliseconds, so
+        // the undelayed note is compared over the same tenth.)
         let delayed = vibrato_render(
             Controls {
                 lfo_depth: 1.0,
@@ -1357,12 +1359,12 @@ mod tests {
             24_000,
         );
         assert_eq!(
-            difference(&plain[..960], &delayed[..960]),
+            difference(&plain[..4_800], &delayed[..4_800]),
             0.0,
             "the delay did not hold the modulation off"
         );
         assert!(
-            difference(&plain[..960], &vibrato[..960]) > 0.0,
+            difference(&plain[..4_800], &vibrato[..4_800]) > 0.0,
             "without the delay it starts at once"
         );
         assert!(difference(&plain, &delayed) > 0.0, "and it does arrive");

@@ -51,6 +51,16 @@
   jump — and its seconds per rate match the hardware's table to a few per
   cent. Every voice in the bank was measured again against its reference
   afterwards.
+- The LFO on the firmware's own arithmetic. Speed: the scaled dial times
+  eleven into a sixteen-bit phase word every tick, the multiplier climbing
+  from a scaled 160 up, which is 0.063 Hz at 0 and 49.5 at 99 on the
+  inferred tick. Delay: a mantissa and an exponent that double every sixteen
+  steps, then a fade about as long as the delay, and thirty-six milliseconds
+  even at 0. Each wave starts where `LFO_GET_AMPLITUDE` starts it — the
+  triangle at its bottom, the saws at their centre — and the pitch
+  modulation sensitivity table and its depth arithmetic confirm the ±12
+  semitones RF-7 already had. The exponential speed curve and the quadratic
+  delay that stood here were replaced.
 - The pitch envelope on the firmware's own tables. `TABLE_PITCH_EG_LEVEL`
   carried verbatim: a level is a byte whose top seven bits join a pitch word
   of 4096 to the octave, so a step is 3/8 of a semitone, the middle of the

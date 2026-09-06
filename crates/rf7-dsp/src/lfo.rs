@@ -4,12 +4,8 @@
 //! played with vibrato moves as one thing rather than as six independent
 //! wobbles. RF-7 keeps that: the LFO belongs to the engine, not to the voice.
 
-use crate::tables::{lfo_delay_seconds, lfo_hertz};
+use crate::tables::{lfo_delay_seconds, lfo_fade_seconds, lfo_hertz};
 use rf7_voice::{Lfo as LfoParameters, LfoWaveform};
-
-/// The shortest fade-in once the delay has elapsed, so a delayed LFO does not
-/// arrive as a step.
-const MINIMUM_FADE: f32 = 0.02;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Lfo {
@@ -66,14 +62,10 @@ impl Lfo {
             0.0
         };
         self.increment = lfo_hertz(parameters.speed) * rate_scale / sample_rate;
-        let delay = lfo_delay_seconds(parameters.delay) + added_delay;
-        self.delay = delay;
-        // No delay means no fade: the modulation is simply already there.
-        self.fade = if delay > 0.0 {
-            delay.max(MINIMUM_FADE)
-        } else {
-            0.0
-        };
+        self.delay = lfo_delay_seconds(parameters.delay) + added_delay;
+        // The program's fade is the firmware's, about as long as its delay;
+        // seconds added to the delay fade over their own length too.
+        self.fade = lfo_fade_seconds(parameters.delay).max(added_delay);
     }
 
     /// Called when a key starts a phrase. A synced LFO restarts its cycle and
@@ -103,21 +95,33 @@ impl Lfo {
         self.shape() * amount
     }
 
+    /// Each wave from the phase word the way `LFO_GET_AMPLITUDE` reads it:
+    /// the triangle starts at its bottom and peaks halfway, the saws start
+    /// at their centre and wrap halfway, the square is high first, and the
+    /// sine starts at zero.
     fn shape(&self) -> f32 {
         match self.waveform {
-            // Starting at zero and rising is what makes a synced triangle read
-            // as vibrato rather than as a bend.
             LfoWaveform::Triangle => {
-                if self.phase < 0.25 {
-                    4.0 * self.phase
-                } else if self.phase < 0.75 {
-                    2.0 - 4.0 * self.phase
+                if self.phase < 0.5 {
+                    4.0 * self.phase - 1.0
                 } else {
-                    4.0 * self.phase - 4.0
+                    3.0 - 4.0 * self.phase
                 }
             }
-            LfoWaveform::SawDown => 1.0 - 2.0 * self.phase,
-            LfoWaveform::SawUp => 2.0 * self.phase - 1.0,
+            LfoWaveform::SawUp => {
+                if self.phase < 0.5 {
+                    2.0 * self.phase
+                } else {
+                    2.0 * self.phase - 2.0
+                }
+            }
+            LfoWaveform::SawDown => {
+                if self.phase < 0.5 {
+                    -2.0 * self.phase
+                } else {
+                    2.0 - 2.0 * self.phase
+                }
+            }
             LfoWaveform::Square => {
                 if self.phase < 0.5 {
                     1.0
@@ -187,21 +191,16 @@ mod tests {
 
     #[test]
     fn a_synced_oscillator_restarts_and_an_unsynced_one_does_not() {
-        let mut synced = Lfo::new(&parameters(2, 60, 0, true), 48_000.0);
-        let mut free = Lfo::new(&parameters(2, 60, 0, false), 48_000.0);
+        let mut synced = Lfo::new(&parameters(0, 60, 0, true), 48_000.0);
+        let mut free = Lfo::new(&parameters(0, 60, 0, false), 48_000.0);
         extremes(&mut synced, 1_000);
         extremes(&mut free, 1_000);
-        let moved = free.advance();
+        let before = free.phase;
         synced.key_down();
         free.key_down();
-        assert!(
-            synced.advance() < -0.99,
-            "a synced saw restarts at the bottom"
-        );
-        assert!(
-            (free.advance() - moved).abs() < 0.01,
-            "a free oscillator runs on"
-        );
+        assert_eq!(synced.phase, 0.0, "a synced oscillator restarts its cycle");
+        assert_eq!(synced.elapsed, 0.0, "and its delay");
+        assert_eq!(free.phase, before, "a free oscillator runs on");
     }
 
     #[test]

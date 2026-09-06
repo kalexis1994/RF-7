@@ -273,18 +273,56 @@ fn detune_factor(detune: u8) -> f64 {
     ((f64::from(detune.min(14)) - 7.0) * DETUNE_OCTAVES).exp2()
 }
 
-/// LFO speed 0..=99 to hertz.
-pub fn lfo_hertz(speed: u8) -> f32 {
-    const SLOWEST: f32 = 0.062;
-    const FASTEST: f32 = 47.0;
-    let position = f32::from(speed.min(99)) / 99.0;
-    SLOWEST * (FASTEST / SLOWEST).powf(position)
+/// The firmware's LFO phase increment for a speed 0..=99: added to a
+/// sixteen-bit phase word on every timer tick.
+///
+/// `PATCH_ACTIVATE_SCALE_LFO_SPEED`: the speed scaled to 0..=255 (the top
+/// byte of `speed × 660`), multiplied by 11 — and, from 160 up, by
+/// `11 + (scaled − 160) / 4`, which is what bends the top of the dial
+/// upwards. Speed 0 is treated as 1 so the arithmetic never stalls.
+pub fn lfo_phase_increment(speed: u8) -> u32 {
+    let scaled = if speed == 0 {
+        1
+    } else {
+        (u32::from(speed.min(99)) * 660) >> 8
+    };
+    let multiplier = if scaled >= 160 {
+        11 + (scaled - 160) / 4
+    } else {
+        11
+    };
+    scaled * multiplier
 }
 
-/// LFO delay 0..=99 to the seconds before modulation is fully in.
+/// LFO speed 0..=99 to hertz: the phase increment over the word's 65536,
+/// at the timer's rate.
+pub fn lfo_hertz(speed: u8) -> f32 {
+    lfo_phase_increment(speed) as f32 * TIMER_TICKS_PER_SECOND / 65536.0
+}
+
+/// The firmware's LFO delay increment for a delay 0..=99: added to a
+/// sixteen-bit delay word on every tick until it overflows, which is when
+/// the fade-in begins.
+///
+/// `PATCH_ACTIVATE_SCALE_LFO_DELAY`: with `x = 99 − delay`, the increment is
+/// `(16 + (x mod 16)) << (2 + x / 16)` — a mantissa and an exponent, so the
+/// delay doubles every sixteen steps of the dial.
+pub fn lfo_delay_increment(delay: u8) -> u32 {
+    let x = 99 - u32::from(delay.min(99));
+    (16 + (x & 15)) << (2 + (x >> 4))
+}
+
+/// LFO delay 0..=99 to the seconds before the fade-in begins. Even delay 0
+/// waits a few dozen milliseconds, as the instrument does.
 pub fn lfo_delay_seconds(delay: u8) -> f32 {
-    let position = f32::from(delay.min(99)) / 99.0;
-    position * position * 4.0
+    65536.0 / lfo_delay_increment(delay) as f32 / TIMER_TICKS_PER_SECOND
+}
+
+/// The seconds the fade-in takes once the delay is over: the fade counter
+/// climbs to 255 by the top byte of the delay increment — at least one — on
+/// every tick, so a long delay brings a fade about as long.
+pub fn lfo_fade_seconds(delay: u8) -> f32 {
+    255.0 / (lfo_delay_increment(delay) >> 8).max(1) as f32 / TIMER_TICKS_PER_SECOND
 }
 
 /// The firmware's pitch rate table, `TABLE_PITCH_EG_RATE`, indexed 0..=99.
@@ -308,14 +346,17 @@ const PITCH_UNITS_PER_OCTAVE: f32 = 1024.0;
 
 /// How often the hardware moves a gliding voice, in updates per second.
 ///
-/// `PORTA_PROCESS` runs from the periodic timer interrupt and takes half the
-/// sixteen voices each time, and `PITCH_EG_PROCESS` runs every second tick
-/// over all of them, so both move a voice's pitch every second tick. The
-/// tick is the timer's 3140 counts, which is about 374 Hz on the
-/// instrument's clock. The rate table is the firmware's; this number is the
-/// one part of the timing that is inferred rather than read, and it is what
-/// a recording would settle.
-const PITCH_UPDATES_PER_SECOND: f32 = 187.0;
+/// The firmware's periodic timer: `SYSTEM_TICK_PERIOD` is 3140 counts,
+/// which is about 374 a second on the instrument's clock. The LFO advances
+/// on every tick; `PORTA_PROCESS` takes half the sixteen voices each tick
+/// and `PITCH_EG_PROCESS` runs every second tick over all of them, so both
+/// move a voice's pitch every second tick. The tables are the firmware's;
+/// this number is the one part of the timing that is inferred rather than
+/// read, and it is what a recording would settle. The LFO's top speed is
+/// the check on it: the literature's 47 Hz at speed 99 would make the tick
+/// 355, and this makes it 49.5.
+const TIMER_TICKS_PER_SECOND: f32 = 374.0;
+const PITCH_UPDATES_PER_SECOND: f32 = TIMER_TICKS_PER_SECOND / 2.0;
 
 /// Portamento time 0..=99 to the semitones a glide covers each second.
 ///
@@ -563,8 +604,34 @@ mod tests {
         assert!(amp_mod_units(3) > amp_mod_units(1));
         assert!(lfo_hertz(0) < 0.1 && lfo_hertz(99) > 40.0);
         assert!(lfo_hertz(50) > lfo_hertz(49));
-        assert_eq!(lfo_delay_seconds(0), 0.0);
-        assert!(lfo_delay_seconds(99) > 3.0);
+        assert!(lfo_delay_seconds(0) < 0.05);
+        assert!(lfo_delay_seconds(99) > 2.5);
+    }
+
+    #[test]
+    fn the_lfo_runs_on_the_firmwares_own_arithmetic() {
+        // Speed: 11 a tick at 0 and 1, then the scaled speed times 11, and
+        // from a scaled 160 up the multiplier climbs too.
+        assert_eq!(lfo_phase_increment(0), 11);
+        assert_eq!(lfo_phase_increment(1), 22);
+        assert_eq!(lfo_phase_increment(50), ((50 * 660) >> 8) * 11);
+        assert_eq!(lfo_phase_increment(99), 255 * (11 + (255 - 160) / 4));
+        assert!((lfo_hertz(99) - 8670.0 * 374.0 / 65536.0).abs() < 1e-3);
+        for speed in 1..99 {
+            assert!(lfo_hertz(speed + 1) >= lfo_hertz(speed), "speed {speed}");
+        }
+        // Delay: a mantissa and an exponent, doubling every sixteen steps.
+        assert_eq!(lfo_delay_increment(99), 16 << 2);
+        assert_eq!(lfo_delay_increment(0), (16 + 3) << 8);
+        assert_eq!(lfo_delay_increment(50), 17 << 5);
+        assert!((lfo_delay_seconds(99) - 65536.0 / 64.0 / 374.0).abs() < 1e-3);
+        assert!((lfo_fade_seconds(99) - 255.0 / 374.0).abs() < 1e-3);
+        for delay in 0..99 {
+            assert!(
+                lfo_delay_seconds(delay + 1) >= lfo_delay_seconds(delay),
+                "delay {delay}"
+            );
+        }
     }
 
     #[test]
