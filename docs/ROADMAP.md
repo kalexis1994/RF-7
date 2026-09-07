@@ -2,6 +2,16 @@
 
 ## 0.5.0 — done
 
+- Eight cartridges at once, and a library page to find them in. RF-7 held
+  one cartridge; it now declares eight bays, and what plays is all of them in
+  order — up to two hundred and fifty-six programs. A bay's voices are one
+  stretch of the library, so filling, replacing or emptying one leaves every
+  other bay's program numbers where they were, and the plugin publishes one
+  bank per bay so the programs themselves say which cartridge they came from.
+  SETUP is the rack, each bay drawn as the cartridge in it or as an empty one,
+  and pressing one opens its voices and the keys that change it. PROGRAMS is
+  the banks down one side and the chosen bank's programs down the other,
+  because eight cartridges is more than one list can be read down.
 - Cartridges install from the ZIP they were published in. A collection is
   a folder of the same bank four times over — the dump, a MIDI file carrying
   it, and two editors' own formats — so a reader going by content would find

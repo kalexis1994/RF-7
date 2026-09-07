@@ -140,32 +140,37 @@ The floor is a panel 320 pixels wide. At that width every control is still
 on the panel, still legible and still reachable; narrower than that the
 working surface scrolls, and the rail and the section keys do not.
 
+## The library
+
+**PROGRAMS** is two columns. Down the left is every bank there is, one per
+filled bay and named after its cartridge, then the programs you saved; the
+list scrolls on its own, and the bank the program that is playing came out of
+is marked. Down the right are that bank's programs, numbered from one as the
+cartridge numbers them. Choosing a bank on the left changes what is on the
+right and nothing else — the instrument keeps playing what it was playing.
+
+Eight cartridges is more programs than one list can be read down, which is why
+the bank is a column of its own rather than a heading in a long page.
+
 ## The setup surface
 
 RF-7 declares a second surface, CONFIG, which RackForge opens from its
 Plugins section. It holds what is done once rather than while playing:
 
-- **Voice cartridge** — the cartridge in the slot, drawn as one: the factory
-  bank or a file of yours, its source and how many programs it gives the
-  instrument, and the two commands that change it. *Install…* opens the
-  host's own explorer, and the file it returns is installed at once — a dump,
-  a chip image, or the ZIP a collection was published in, read as the banks
-  inside it; *Remove* puts the factory bank back.
-- **On the shelf** — every cartridge the surface knows, as the DX7's own
-  looked: a dark slab with a turquoise *VOICE ROM* band along the spine and a
-  label on its face — a number, a hairline, and rows A and B naming the
-  first and last voice of each bank of thirty-two. The factory bank comes
-  first, then every file RackForge has been granted before, then your saved
-  programs as a silver *DATA RAM*. The one playing is lit. Pressing a
-  cartridge opens its voices, numbered in the two columns its label would
-  print them, with *Put it in* for a file that is not in the slot, *Play the
-  factory bank* for the factory, and *In the slot* for the one playing.
-  A file's voices are read the first time it plays: the host tells the
-  surface only what is playing now, so the surface keeps each cartridge's
-  catalog itself, in the browser's storage, and a file not yet put in says
-  *Install to read* until it is.
-- **Instrument** — the plugin version, how many programs you have saved, and
-  whether the host is answering.
+- **Cartridge bays** — the rack: eight bays, each drawn as the cartridge in
+  it, the way the DX7's own looked. A dark slab with a turquoise *VOICE ROM*
+  band along the spine and a label on its face: the bay's number, a hairline,
+  and rows A and B naming the first and last voice of each bank of thirty-two,
+  with the file's name in the corner. A filled bay is lit; an empty one sits
+  back and says so. If you have saved programs, the rack ends with them, on
+  the silver *DATA RAM* the instrument would have written them to.
+
+  Pressing a bay opens what it holds — its voices, numbered in the two columns
+  its label would print them — with *Install…* or *Replace…*, *Take it out*,
+  and the files RackForge has been granted before, each one press away from
+  going into this bay without the explorer.
+- **Instrument** — the plugin version, how many programs there are and how
+  many you saved, whether the host is answering, and where the exports go.
 
 The surface never sees a path, and it cannot invent one: it asks for the
 resource by the name the manifest declares, and the host decides what that

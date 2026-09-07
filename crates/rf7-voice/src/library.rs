@@ -19,8 +19,9 @@ use crate::{
     sysex::{BULK_DUMP_LENGTH, SysexError, VOICE_DUMP_LENGTH, VOICES_PER_CARTRIDGE},
 };
 
-/// As many voices as RF-7 will offer as programs at once.
-pub const MAX_VOICES: usize = 128;
+/// As many voices as RF-7 will offer as programs at once: eight cartridges
+/// of thirty-two, which is what its eight bays hold.
+pub const MAX_VOICES: usize = 256;
 /// One bank of thirty-two packed voices, as a chip holds them.
 pub const RAW_BANK_LENGTH: usize = VOICES_PER_CARTRIDGE * PACKED_VOICE_LENGTH;
 
@@ -102,6 +103,35 @@ impl Library {
             length: 0,
             found: 0,
         }
+    }
+
+    /// Put `other`'s voices in place of `remove` of this library's, starting
+    /// at `at`, and return how many went in.
+    ///
+    /// This is what a rack of cartridge bays needs: a bay's voices sit in one
+    /// stretch of the library, and replacing what is in that bay leaves every
+    /// other bay where it was. Everything past the cap falls off the end.
+    pub fn splice(&mut self, at: usize, remove: usize, other: &Library) -> usize {
+        let at = at.min(self.length);
+        let remove = remove.min(self.length - at);
+        let tail = at + remove;
+        let tail_length = self.length - tail;
+        let inserted = other.length.min(MAX_VOICES - at);
+        let kept = tail_length.min(MAX_VOICES - at - inserted);
+        self.voices.copy_within(tail..tail + kept, at + inserted);
+        self.corrections
+            .copy_within(tail..tail + kept, at + inserted);
+        self.voices[at..at + inserted].copy_from_slice(&other.voices[..inserted]);
+        self.corrections[at..at + inserted].copy_from_slice(&other.corrections[..inserted]);
+        self.length = at + inserted + kept;
+        self.found = self.length;
+        inserted
+    }
+
+    /// Say how many voices the sources held, which can exceed what is kept.
+    /// A library spliced together from several has to be told.
+    pub fn set_found(&mut self, found: usize) {
+        self.found = found.max(self.length);
     }
 
     /// Take on another library's voices, keeping this one's cap and counting

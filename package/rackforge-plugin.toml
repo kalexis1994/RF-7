@@ -43,14 +43,66 @@ entry = "web/play.html"
 kind = "config"
 entry = "web/config.html"
 
-# No voice data is shipped. The user installs a cartridge they own, and its
-# thirty-two voices become the plugin's thirty-two programs.
+# No voice data is shipped. The user installs the cartridges they own, and
+# their voices become the plugin's programs. Eight bays, so a rack of them
+# plays at once rather than one at a time; the first keeps the name RF-7
+# has always declared, so a cartridge installed before there were bays
+# stays where it is.
 [[resources]]
 id = "cartridge"
-name = "Voice Cartridge"
+name = "Cartridge Bay 1"
 kind = "file"
 required = false
 data_path = "cartridges/current.syx"
+
+[[resources]]
+id = "cartridge-2"
+name = "Cartridge Bay 2"
+kind = "file"
+required = false
+data_path = "cartridges/bay-2.syx"
+
+[[resources]]
+id = "cartridge-3"
+name = "Cartridge Bay 3"
+kind = "file"
+required = false
+data_path = "cartridges/bay-3.syx"
+
+[[resources]]
+id = "cartridge-4"
+name = "Cartridge Bay 4"
+kind = "file"
+required = false
+data_path = "cartridges/bay-4.syx"
+
+[[resources]]
+id = "cartridge-5"
+name = "Cartridge Bay 5"
+kind = "file"
+required = false
+data_path = "cartridges/bay-5.syx"
+
+[[resources]]
+id = "cartridge-6"
+name = "Cartridge Bay 6"
+kind = "file"
+required = false
+data_path = "cartridges/bay-6.syx"
+
+[[resources]]
+id = "cartridge-7"
+name = "Cartridge Bay 7"
+kind = "file"
+required = false
+data_path = "cartridges/bay-7.syx"
+
+[[resources]]
+id = "cartridge-8"
+name = "Cartridge Bay 8"
+kind = "file"
+required = false
+data_path = "cartridges/bay-8.syx"
 
 [component]
 abi = "wasm-v1"

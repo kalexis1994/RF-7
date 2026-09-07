@@ -59,8 +59,10 @@ not depend on what it was handed. Encryption, the extensions for very large
 files, and compression methods other than *stored* and *deflate* are refused
 rather than guessed at.
 
-RF-7 offers up to **128 programs**. A file holding more is read and capped, and
-the laboratory reports how many the file actually contained.
+RF-7 holds **eight cartridges at once**, in eight bays, and offers up to **256
+programs** — every bay in order, then the programs you saved. A file holding
+more than fits is read and capped, and the laboratory reports how many the file
+actually contained.
 
 ## Which bank comes first
 
@@ -93,16 +95,26 @@ boundaries, and says how many bytes were out of range.
 
 ## In RackForge
 
-RF-7's **SETUP** surface installs one. Open the plugin from RackForge's
-Plugins section and press *Install…*: the host opens its own file explorer,
-copies what you choose — a dump, a chip image or the ZIP a collection came
-in — prepares a replacement instance away from the audio callback and swaps it
-at a block boundary. *Remove* puts the factory bank
-back. Files the host has been pointed at before are listed under *Already
-chosen*, so the same cartridge goes back in without the explorer. The host
-reports only that a cartridge is installed, so the surface remembers which of
-those files it installed last and prints its name as the source, with its pad
-lit, for as long as the host still lists it.
+RF-7's **SETUP** surface is the rack: eight bays, each drawn as the cartridge
+in it or as an empty one. Open the plugin from RackForge's Plugins section and
+press a bay. *Install…* opens the host's own file explorer, and what you
+choose — a dump, a chip image, or the ZIP a collection came in — is copied
+into that bay; the host prepares a replacement instance away from the audio
+callback and swaps it at a block boundary. *Take it out* empties the bay.
+Files the host has been pointed at before are listed inside a bay under
+*Already chosen*, so the same cartridge goes into another bay without the
+explorer.
+
+What is in a bay is not remembered by the surface: the plugin publishes one
+**bank per bay**, so the programs themselves say which cartridge they came
+from, and the surface draws the label from them. The one thing it does keep is
+the file's name, because the host never tells a plugin what a file was
+called.
+
+A bay's voices sit in one stretch of the library, so filling, replacing or
+emptying one leaves every other bay exactly where it was. Program numbers run
+straight through the rack: bay one's voices are programs 1 upwards, and the
+next filled bay carries on from there.
 
 Going the other way — RF-7's programs, or its factory bank, as a cartridge —
 happens with every save: the host writes `exports/rf7-programs-N.syx` and,
@@ -115,16 +127,19 @@ Setting the library up is not something to reach for while playing, which is
 why it is a surface of its own: RackForge keeps program selection and voice
 editing in PLAY, and libraries, resources and diagnostics in CONFIG.
 
-Underneath, the package declares one optional file resource, `cartridge`,
-whose private location is
-`<data-root>/plugins/org.rackforge.rf7/cartridges/current.syx`. The explorer,
+Underneath, the package declares eight optional file resources — `cartridge`,
+then `cartridge-2` through `cartridge-8` — whose private locations are
+`<data-root>/plugins/org.rackforge.rf7/cartridges/`. The first keeps the name
+RF-7 has always declared, so a cartridge installed before there were bays is
+still in bay one. The explorer,
 the permission and the copy are all the host's: RF-7 is handed the bytes and
 never sees a path, and the surface asks for the file by the resource's name
 rather than by any location of its own.
 
 Once a cartridge is delivered, RF-7 publishes its voices as the plugin's
 programs, `program-001` upwards, named as the cartridge names them and grouped
-into banks of thirty-two. Until then the thirty-eight factory voices stand in.
+into one bank per bay. With every bay empty the thirty-eight factory voices
+stand in, in a bank of their own.
 
 ## Bytes that are out of range
 

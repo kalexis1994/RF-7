@@ -11,7 +11,7 @@
 
 use crate::cartridge;
 use crate::diagram;
-use crate::model::{Draft, Field, FieldKind, Parameter, ParameterKind, State, frequency_text};
+use crate::model::{Bay, Draft, Field, FieldKind, Parameter, ParameterKind, State, frequency_text};
 use std::fmt::Write;
 
 pub fn esc(text: &str) -> String {
@@ -502,76 +502,49 @@ pub const CARTRIDGE: &str = "cartridge";
 /// collection is published as a ZIP of the lot.
 pub const CARTRIDGE_EXTENSIONS: [&str; 4] = ["syx", "bin", "dx7", "zip"];
 
-/// The setup surface: what the instrument is playing from, and how to change
-/// it. Everything here is the host's — RF-7 never sees a path.
+/// The setup surface: the rack of cartridge bays, and what is in each.
 ///
-/// The cartridges are drawn as cartridges. The one in the slot sits first,
-/// with the commands that change it; the shelf below holds the factory
-/// bank, every file the host has granted before and, as a RAM, the saved
-/// programs. A card opens its voices.
+/// Everything here is the host's — RF-7 never sees a path. A bay is drawn as
+/// the cartridge in it, or as an empty one; pressing it opens what it holds
+/// and the commands that change it.
 fn page_config(state: &State) -> String {
-    let installed = state.resource_installed(CARTRIDGE);
+    let bays = state.bays();
+    let busy = !state.busy.is_empty();
+    let filled = bays.iter().filter(|bay| bay.filled()).count();
     let programs = state
         .instance
         .as_ref()
         .map_or(0, |instance| instance.sounds.len());
-    let busy = !state.busy.is_empty();
-    let cards = shelf(state);
-    let slot = cards
-        .iter()
-        .find(|card| card.lit)
-        .cloned()
-        .unwrap_or_else(|| factory_card(state, false));
 
-    let mut cartridge = String::new();
-    // The host says only that a cartridge is installed; the name is the
-    // file SETUP put there last, while the host still lists it.
-    let source = if !installed {
-        "FACTORY BANK".to_owned()
-    } else {
-        state
-            .installed_cartridge_name()
-            .map_or_else(|| "YOUR CARTRIDGE".to_owned(), esc)
-    };
+    let saved = state.saved_names();
+    let mut rack = String::from("<div class=\"rack\">");
+    for bay in &bays {
+        rack.push_str(&bay_button(bay, busy));
+    }
+    // The programs you saved are not a bay — nothing was installed to make
+    // them — but they are a cartridge of yours, so they sit at the end of
+    // the rack as the data cartridge the instrument wrote to.
+    if !saved.is_empty() {
+        rack.push_str(&saved_button(&saved, busy));
+    }
+    rack.push_str("</div>");
     let _ = write!(
-        cartridge,
-        "<div class=\"slot\">{}<dl class=\"facts\"><dt>SOURCE</dt><dd>{source}</dd><dt>PROGRAMS</dt><dd>{programs}</dd></dl></div>",
-        card_button(&slot, busy)
-    );
-    let _ = write!(
-        cartridge,
-        "<div class=\"row\"><button type=\"button\" class=\"key wide\" data-action=\"choose-cartridge\"{}>{}</button><button type=\"button\" class=\"key wide\" data-action=\"clear-cartridge\"{}>REMOVE</button></div>",
-        if busy || !state.connected {
-            " disabled"
-        } else {
-            ""
-        },
-        if installed {
-            "REPLACE…"
-        } else {
-            "INSTALL…"
-        },
-        if busy || !installed { " disabled" } else { "" }
-    );
-    // One line, because the buttons say the rest.
-    cartridge.push_str(
-        "<p class=\"small\">Bulk dumps, single voices, a raw chip image, or a ZIP of them. Up to 128 voices.</p>",
+        rack,
+        "<p class=\"small\">{}. Bulk dumps, single voices, a raw chip image, or a ZIP of them. Up to 256 voices in all.</p>",
+        match filled {
+            0 => "Every bay is empty, so the factory bank is playing".to_owned(),
+            1 => "One bay filled".to_owned(),
+            filled => format!("{filled} bays filled"),
+        }
     );
 
     let mut out = String::from("<div class=\"page page-config\">");
-    out.push_str(&group("cartridge", "blue", "VOICE CARTRIDGE", &cartridge));
-
-    let mut body = String::from("<div class=\"shelf\">");
-    for card in &cards {
-        body.push_str(&card_button(card, busy));
-    }
-    body.push_str("</div>");
-    out.push_str(&group("shelf", "amber", "ON THE SHELF", &body));
+    out.push_str(&group("bays", "blue", "CARTRIDGE BAYS", &rack));
 
     let mut about = String::new();
     let _ = write!(
         about,
-        "<dl class=\"facts\"><dt>PLUGIN</dt><dd>RF-7 {}</dd><dt>SAVED PROGRAMS</dt><dd>{}</dd><dt>HOST</dt><dd>{}</dd><dt>EXPORTS</dt><dd>On every save, under RackForge's data folder: plugins/org.rackforge.rf7/exports/rf7-programs-1.syx and, while the factory bank plays, rf7-factory-1.syx and -2.syx</dd></dl>",
+        "<dl class=\"facts\"><dt>PLUGIN</dt><dd>RF-7 {}</dd><dt>PROGRAMS</dt><dd>{programs}</dd><dt>SAVED PROGRAMS</dt><dd>{}</dd><dt>HOST</dt><dd>{}</dd><dt>EXPORTS</dt><dd>On every save, under RackForge's data folder: plugins/org.rackforge.rf7/exports/rf7-programs-1.syx and, while the factory bank plays, rf7-factory-1.syx and -2.syx</dd></dl>",
         env!("CARGO_PKG_VERSION"),
         state.saved_names().len(),
         if state.connected {
@@ -587,229 +560,194 @@ fn page_config(state: &State) -> String {
     } else if !state.notice.is_empty() {
         let _ = write!(out, "<p class=\"note\">{}</p>", esc(&state.notice));
     }
-    if let Some(open) = &state.modal
-        && let Some(card) = cards.iter().find(|card| &card.key == open)
-    {
-        out.push_str(&modal(card, state, busy));
+    match state.modal {
+        Some(index) if index < bays.len() => out.push_str(&bay_modal(&bays[index], state, busy)),
+        Some(_) if !saved.is_empty() => out.push_str(&saved_modal(&saved)),
+        _ => {}
     }
     out.push_str("</div>");
     out
 }
 
-/// One cartridge on the shelf: what its label says, what it is, and what
-/// pressing it can do.
-#[derive(Clone, Debug)]
-struct Card {
-    /// The catalog key: a grant id, `factory` or `saved`.
-    key: String,
-    face: cartridge::Face,
-    /// The name across the top of its voices.
-    title: String,
-    /// Its voices, if the surface has read them.
-    voices: Option<Vec<String>>,
-    /// The grant the host can install, when it is a file.
-    grant: Option<String>,
-    /// Whether it is the one playing.
-    lit: bool,
-}
-
-/// A label row from a bank's first and last voice.
-fn row(names: &[String]) -> String {
-    match (names.first(), names.last()) {
+/// What one bay's label says: the first and last voice of each bank of
+/// thirty-two, which is how a cartridge was labelled.
+fn bay_face(bay: &Bay) -> cartridge::Face {
+    let row = |names: &[String]| match (names.first(), names.last()) {
         (Some(first), Some(last)) if names.len() > 1 => {
             format!("{} — {}", first.trim(), last.trim())
         }
         (Some(first), _) => first.trim().to_owned(),
         _ => String::new(),
+    };
+    let (first, second) = bay.voices.split_at(bay.voices.len().min(VOICES_PER_BANK));
+    cartridge::Face {
+        number: (bay.index + 1).to_string(),
+        kind: cartridge::Kind::Rom,
+        rows: if bay.filled() {
+            [row(first), row(second)]
+        } else {
+            ["EMPTY".to_owned(), String::new()]
+        },
+        serial: bay.title(),
+        voices: bay.voices.len(),
+        banks: bay.voices.len().div_ceil(VOICES_PER_BANK).max(1),
+        dim: !bay.filled(),
     }
-}
-
-fn rows(names: &[String]) -> [String; 2] {
-    let (a, b) = names.split_at(names.len().min(VOICES_PER_BANK));
-    [row(a), row(b)]
 }
 
 const VOICES_PER_BANK: usize = 32;
 
-fn factory_card(state: &State, lit: bool) -> Card {
-    let voices = state.catalogs.get(crate::model::FACTORY).cloned();
-    let face = match &voices {
-        Some(names) => cartridge::Face {
-            number: "RF".into(),
-            kind: cartridge::Kind::Rom,
-            rows: rows(names),
-            serial: "FACTORY".into(),
-            voices: names.len(),
-            banks: names.len().div_ceil(VOICES_PER_BANK).max(1),
-            dim: false,
-        },
-        None => cartridge::Face {
-            number: "RF".into(),
-            kind: cartridge::Kind::Rom,
-            rows: ["THE FACTORY BANK".into(), String::new()],
-            serial: "FACTORY".into(),
-            voices: 0,
-            banks: 0,
-            dim: true,
-        },
-    };
-    Card {
-        key: crate::model::FACTORY.into(),
-        face,
-        title: "FACTORY BANK".into(),
-        voices,
-        grant: None,
-        lit,
-    }
-}
-
-/// The cards, in shelf order: the factory bank, the files, the saved
-/// programs. The one playing is lit.
-fn shelf(state: &State) -> Vec<Card> {
-    let installed = state.resource_installed(CARTRIDGE);
-    let mut cards = vec![factory_card(state, !installed)];
-    let grants = state
-        .grants
-        .iter()
-        .filter(|grant| grant.resource == CARTRIDGE);
-    for (index, grant) in grants.enumerate() {
-        let lit = installed && state.installed_grant.as_deref() == Some(grant.id.as_str());
-        let voices = state.catalogs.get(&grant.id).cloned();
-        let face = match &voices {
-            Some(names) => cartridge::Face {
-                number: (index + 1).to_string(),
-                kind: cartridge::Kind::Rom,
-                rows: rows(names),
-                serial: grant.name.clone(),
-                voices: names.len(),
-                banks: names.len().div_ceil(VOICES_PER_BANK).max(1),
-                dim: false,
-            },
-            None => cartridge::Face {
-                number: (index + 1).to_string(),
-                kind: cartridge::Kind::Rom,
-                rows: ["INSTALL TO READ".into(), String::new()],
-                serial: grant.name.clone(),
-                voices: 0,
-                banks: 0,
-                dim: true,
-            },
-        };
-        cards.push(Card {
-            key: grant.id.clone(),
-            face,
-            title: grant.name.clone(),
-            voices,
-            grant: Some(grant.id.clone()),
-            lit,
-        });
-    }
-    let saved = state.saved_names();
-    if !saved.is_empty() {
-        cards.push(Card {
-            key: crate::model::SAVED.into(),
-            face: cartridge::Face {
-                number: "U".into(),
-                kind: cartridge::Kind::Ram,
-                rows: ["YOUR PROGRAMS".into(), format!("{} SAVED", saved.len())],
-                serial: "SAVED PROGRAMS".into(),
-                voices: saved.len(),
-                banks: 1,
-                dim: false,
-            },
-            title: "YOUR PROGRAMS".into(),
-            voices: Some(saved),
-            grant: None,
-            lit: false,
-        });
-    }
-    cards
-}
-
-fn card_button(card: &Card, busy: bool) -> String {
+fn bay_button(bay: &Bay, busy: bool) -> String {
     format!(
-        "<button type=\"button\" class=\"cart\" data-card=\"{}\" aria-pressed=\"{}\" title=\"{}\"{}>{}</button>",
-        esc(&card.key),
-        card.lit,
-        esc(&card.title),
+        "<button type=\"button\" class=\"cart{}\" data-card=\"{}\" data-bay=\"{}\" aria-pressed=\"{}\" title=\"{}\"{}>{}</button>",
+        if bay.filled() { "" } else { " empty" },
+        bay.index,
+        bay.index,
+        bay.filled(),
+        esc(&bay.title()),
         if busy { " disabled" } else { "" },
-        cartridge::svg(&card.face, &card.key)
+        cartridge::svg(&bay_face(bay), &bay.index.to_string())
     )
 }
 
-/// A cartridge's voices, in the two columns its label would print them.
-fn modal(card: &Card, state: &State, busy: bool) -> String {
+/// The programs you saved, as the data cartridge they would have been
+/// written to.
+fn saved_face(saved: &[String]) -> cartridge::Face {
+    cartridge::Face {
+        number: "U".to_owned(),
+        kind: cartridge::Kind::Ram,
+        rows: ["YOUR PROGRAMS".to_owned(), format!("{} SAVED", saved.len())],
+        serial: "SAVED PROGRAMS".to_owned(),
+        voices: saved.len(),
+        banks: 1,
+        dim: false,
+    }
+}
+
+fn saved_button(saved: &[String], busy: bool) -> String {
+    format!(
+        "<button type=\"button\" class=\"cart\" data-card=\"{}\" title=\"Your programs\"{}>{}</button>",
+        crate::model::CARTRIDGE_BAYS,
+        if busy { " disabled" } else { "" },
+        cartridge::svg(&saved_face(saved), "saved")
+    )
+}
+
+fn saved_modal(saved: &[String]) -> String {
     let mut out = String::from(
         "<div class=\"modal\" data-action=\"close-modal\"><div class=\"modal-card\" data-action=\"modal\" role=\"dialog\" aria-modal=\"true\">",
     );
     let _ = write!(
         out,
-        "<div class=\"modal-cart\">{}</div><div class=\"modal-body\"><h3>{}</h3>",
-        cartridge::svg(&card.face, &format!("modal-{}", card.key)),
-        esc(&card.title)
+        "<div class=\"modal-cart\">{}</div><div class=\"modal-body\"><h3>YOUR PROGRAMS</h3><p class=\"modal-facts\">{} SAVED FROM THE EDITOR</p><ol class=\"voices\">",
+        cartridge::svg(&saved_face(saved), "modal-saved"),
+        saved.len()
     );
-    match &card.voices {
-        Some(names) => {
-            let _ = write!(
-                out,
-                "<p class=\"modal-facts\">{} VOICES · {}</p>",
-                names.len(),
-                if card.key == crate::model::SAVED {
-                    "SAVED FROM THE EDITOR".to_owned()
-                } else {
-                    format!(
-                        "{} BANK{}",
-                        names.len().div_ceil(VOICES_PER_BANK).max(1),
-                        if names.len() > VOICES_PER_BANK { "S" } else { "" }
-                    )
-                }
-            );
-            for (bank, chunk) in names.chunks(VOICES_PER_BANK).enumerate() {
-                if names.len() > VOICES_PER_BANK {
-                    let _ = write!(
-                        out,
-                        "<h4><span class=\"letter\">{}</span> BANK {}</h4>",
-                        (b'A' + (bank as u8).min(25)) as char,
-                        bank + 1
-                    );
-                }
-                out.push_str("<ol class=\"voices\">");
-                for (index, name) in chunk.iter().enumerate() {
-                    let _ = write!(
-                        out,
-                        "<li><span class=\"n\">{:02}</span><span class=\"name\">{}</span></li>",
-                        index + 1,
-                        esc(name)
-                    );
-                }
-                out.push_str("</ol>");
-            }
-        }
-        None => out.push_str(
-            "<p class=\"modal-facts\">Its voices are read when it goes in. Put it in the slot to see them.</p>",
-        ),
+    for (index, name) in saved.iter().enumerate() {
+        let _ = write!(
+            out,
+            "<li><span class=\"n\">{:02}</span><span class=\"name\">{}</span></li>",
+            index + 1,
+            esc(name)
+        );
     }
-    out.push_str("<div class=\"row modal-keys\">");
+    out.push_str("</ol><div class=\"row modal-keys\"><button type=\"button\" class=\"key wide\" data-action=\"close-modal\">CLOSE</button></div></div></div></div>");
+    out
+}
+
+/// One bay's voices, in the two columns its label would print them, with the
+/// commands that change what is in it.
+fn bay_modal(bay: &Bay, state: &State, busy: bool) -> String {
     let disabled = if busy || !state.connected {
         " disabled"
     } else {
         ""
     };
-    if card.lit {
-        out.push_str("<span class=\"key wide lit\"><span class=\"led\"></span>IN THE SLOT</span>");
-    } else if let Some(grant) = &card.grant {
+    let mut out = String::from(
+        "<div class=\"modal\" data-action=\"close-modal\"><div class=\"modal-card\" data-action=\"modal\" role=\"dialog\" aria-modal=\"true\">",
+    );
+    let _ = write!(
+        out,
+        "<div class=\"modal-cart\">{}</div><div class=\"modal-body\" data-bay=\"{}\"><h3>{}</h3>",
+        cartridge::svg(&bay_face(bay), &format!("modal-{}", bay.index)),
+        bay.index,
+        esc(&bay.title())
+    );
+    if bay.filled() {
         let _ = write!(
             out,
-            "<button type=\"button\" class=\"key wide\" data-grant=\"{}\"{disabled}>PUT IT IN</button>",
-            esc(grant)
+            "<p class=\"modal-facts\">BAY {} · {} VOICES</p>",
+            bay.index + 1,
+            bay.voices.len()
         );
-    } else if card.key == crate::model::FACTORY {
+        for (bank, chunk) in bay.voices.chunks(VOICES_PER_BANK).enumerate() {
+            if bay.voices.len() > VOICES_PER_BANK {
+                let _ = write!(
+                    out,
+                    "<h4><span class=\"letter\">{}</span> BANK {}</h4>",
+                    (b'A' + (bank as u8).min(25)) as char,
+                    bank + 1
+                );
+            }
+            out.push_str("<ol class=\"voices\">");
+            for (index, name) in chunk.iter().enumerate() {
+                let _ = write!(
+                    out,
+                    "<li><span class=\"n\">{:02}</span><span class=\"name\">{}</span></li>",
+                    index + 1,
+                    esc(name)
+                );
+            }
+            out.push_str("</ol>");
+        }
+    } else {
         let _ = write!(
             out,
-            "<button type=\"button\" class=\"key wide\" data-action=\"clear-cartridge\"{disabled}>PLAY THE FACTORY BANK</button>"
+            "<p class=\"modal-facts\">BAY {} · EMPTY</p><p class=\"small\">Put a cartridge in and its voices join the programs, behind whatever the bays before it hold.</p>",
+            bay.index + 1
         );
     }
-    out.push_str("<button type=\"button\" class=\"key wide\" data-action=\"close-modal\">CLOSE</button></div></div></div></div>");
+    out.push_str("<div class=\"row modal-keys\">");
+    let _ = write!(
+        out,
+        "<button type=\"button\" class=\"key wide\" data-action=\"choose-cartridge\" data-bay=\"{}\"{disabled}>{}</button>",
+        bay.index,
+        if bay.filled() {
+            "REPLACE…"
+        } else {
+            "INSTALL…"
+        }
+    );
+    if bay.filled() {
+        let _ = write!(
+            out,
+            "<button type=\"button\" class=\"key wide\" data-action=\"clear-cartridge\" data-bay=\"{}\"{disabled}>TAKE IT OUT</button>",
+            bay.index
+        );
+    }
+    out.push_str("<button type=\"button\" class=\"key wide\" data-action=\"close-modal\">CLOSE</button></div>");
+
+    // The files the host has been pointed at before go back in without the
+    // explorer, into this bay.
+    let grants: Vec<&crate::model::Grant> = state
+        .grants
+        .iter()
+        .filter(|grant| grant.resource.starts_with("cartridge"))
+        .collect();
+    if !grants.is_empty() {
+        out.push_str("<h4>ALREADY CHOSEN</h4><div class=\"pads\">");
+        for grant in grants {
+            let _ = write!(
+                out,
+                "<button type=\"button\" class=\"pad\" data-grant=\"{}\" data-bay=\"{}\"{disabled}><span class=\"n\">↺</span><span class=\"name\">{}</span></button>",
+                esc(&grant.id),
+                bay.index,
+                esc(&grant.name)
+            );
+        }
+        out.push_str("</div>");
+    }
+    out.push_str("</div></div></div>");
     out
 }
 
@@ -1249,56 +1187,79 @@ fn control_labelled(state: &State, parameter: &Parameter, label: &str) -> String
     }
 }
 
+/// The library: every bank down the left, and the programs of the one
+/// showing on the right. A rack of cartridges is more programs than one
+/// list can hold, and the bank is the cartridge it came out of.
 fn page_programs(state: &State) -> String {
-    let Some(instance) = &state.instance else {
+    if state.instance.is_none() {
         return "<div class=\"page\"><section class=\"plate\"><h2>NO CATALOG</h2><p>Waiting for RackForge to send the programs.</p></section></div>".to_owned();
-    };
-    let mut banks: Vec<(String, String)> = instance
-        .banks
-        .iter()
-        .map(|b| (b.id.clone(), b.name.clone()))
-        .collect();
-    for sound in &instance.sounds {
-        if !banks.iter().any(|(id, _)| *id == sound.bank) {
-            banks.push((sound.bank.clone(), sound.bank.clone()));
-        }
     }
+    let banks = state.banks();
+    let shown = state.shown_bank();
     let editing = state.draft.is_some();
+    let playing = state
+        .instance
+        .as_ref()
+        .and_then(|instance| instance.selected.clone());
+
+    let mut list = String::from("<div class=\"banks\">");
+    for (id, name, count) in &banks {
+        let here = playing
+            .as_deref()
+            .and_then(|id| state.instance.as_ref()?.sounds.iter().find(|s| s.id == id))
+            .is_some_and(|sound| sound.bank == *id);
+        let _ = write!(
+            list,
+            "<button type=\"button\" class=\"bank{}\" data-bank=\"{}\" aria-pressed=\"{}\"><span class=\"name\">{}</span><span class=\"count\">{count}</span></button>",
+            if here { " playing" } else { "" },
+            esc(id),
+            shown.as_deref() == Some(id.as_str()),
+            esc(&name.to_uppercase())
+        );
+    }
+    list.push_str("</div>");
+
     let mut out = String::from("<div class=\"page page-programs\">");
-    for (bank_id, bank_name) in banks {
-        let sounds: Vec<_> = instance
-            .sounds
-            .iter()
-            .filter(|s| s.bank == bank_id)
-            .collect();
-        if sounds.is_empty() {
-            continue;
-        }
-        let mut body = String::from("<div class=\"pads\">");
-        for (index, sound) in sounds.iter().enumerate() {
-            let selected = instance.selected.as_deref() == Some(sound.id.as_str());
-            let saved = if sound.id.starts_with("custom.") {
+    out.push_str(&group("banks", "blue", "BANKS", &list));
+
+    let (title, programs) = match &shown {
+        Some(id) => (
+            banks
+                .iter()
+                .find(|(bank, _, _)| bank == id)
+                .map_or_else(|| id.clone(), |(_, name, _)| name.to_uppercase()),
+            state.bank_programs(id),
+        ),
+        None => ("PROGRAMS".to_owned(), Vec::new()),
+    };
+    let mut body = String::from("<div class=\"pads\">");
+    for (index, sound) in programs.iter().enumerate() {
+        let selected = playing.as_deref() == Some(sound.id.as_str());
+        let _ = write!(
+            body,
+            "<button type=\"button\" class=\"pad{}\" data-sound=\"{}\" aria-pressed=\"{selected}\"{}><span class=\"n\">{:02}</span><span class=\"name\">{}</span></button>",
+            if sound.id.starts_with("custom.") {
                 " saved"
             } else {
                 ""
-            };
-            let _ = write!(
-                body,
-                "<button type=\"button\" class=\"pad{saved}\" data-sound=\"{}\" aria-pressed=\"{selected}\"{}><span class=\"n\">{:02}</span><span class=\"name\">{}</span></button>",
-                esc(&sound.id),
-                if editing { " disabled" } else { "" },
-                index + 1,
-                esc(&sound.name)
-            );
-        }
-        body.push_str("</div>");
-        let colour = if bank_id == "bank-user" {
-            "amber"
-        } else {
-            "blue"
-        };
-        out.push_str(&group(&bank_id, colour, &bank_name.to_uppercase(), &body));
+            },
+            esc(&sound.id),
+            if editing { " disabled" } else { "" },
+            index + 1,
+            esc(&sound.name)
+        );
     }
+    if programs.is_empty() {
+        body.push_str("<p class=\"small\">Nothing in this bank.</p>");
+    }
+    body.push_str("</div>");
+    let colour = if shown.as_deref() == Some(crate::model::USER_BANK) {
+        "amber"
+    } else {
+        "blue"
+    };
+    out.push_str(&group("bank", colour, &title, &body));
+
     if editing {
         out.push_str(
             "<p class=\"note\">A program is open. Save or exit it before changing what plays.</p>",
@@ -1321,6 +1282,7 @@ pub fn surface_info(state: &State) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::CARTRIDGE_BAYS;
     use crate::model::{FieldValue, State};
     use serde_json::json;
 
@@ -1488,21 +1450,28 @@ mod tests {
     }
 
     #[test]
-    fn programs_are_pads_grouped_by_bank_and_locked_while_editing() {
+    fn programs_are_pads_of_one_bank_and_locked_while_editing() {
         let mut playing = state();
         playing.page = "programs".into();
         playing.draft = None;
         let html = page(&playing);
+        // The bank the playing program is in is the one that opens.
         assert!(html.contains("<h2>BANK 1</h2>"));
-        assert!(html.contains("<h2>YOUR PROGRAMS</h2>"));
         assert!(html.contains("data-sound=\"program-002\" aria-pressed=\"true\""));
-        assert!(html.contains("class=\"pad saved\" data-sound=\"custom.user.rf7-001\""));
-        assert!(!html.contains("disabled"));
+        assert!(
+            html.contains("data-bank=\"bank-user\""),
+            "the other bank is listed"
+        );
         let mut editing = state();
         editing.page = "programs".into();
         let html = page(&editing);
         assert!(html.contains("aria-pressed=\"false\" disabled"));
         assert!(html.contains("Save or exit it"));
+        // And the saved programs, in their own bank, marked as saved.
+        editing.draft = None;
+        editing.bank = Some("bank-user".into());
+        let html = page(&editing);
+        assert!(html.contains("class=\"pad saved\" data-sound=\"custom.user.rf7-001\""));
     }
 
     #[test]
@@ -1571,7 +1540,7 @@ mod tests {
     }
 
     #[test]
-    fn the_config_surface_offers_the_cartridge_and_nothing_to_play() {
+    fn the_setup_surface_is_a_rack_of_bays_and_nothing_to_play() {
         let mut state = state();
         state.surface = "config".into();
         let html = header(&state);
@@ -1580,100 +1549,163 @@ mod tests {
             !html.contains("data-action=\"edit\""),
             "no program keys here"
         );
-        assert!(!html.contains("data-action=\"save\""));
 
+        // Nothing installed: the factory bank plays and every bay is empty.
+        let mut instance = state.instance.clone().expect("an instance");
+        instance.banks.clear();
+        instance.sounds.clear();
+        state.instance = Some(instance);
         let html = page(&state);
-        assert!(html.contains("<h2>VOICE CARTRIDGE</h2>"));
-        assert!(html.contains("data-action=\"choose-cartridge\">INSTALL…"));
-        // Nothing to remove until something is installed.
-        assert!(html.contains("data-action=\"clear-cartridge\" disabled"));
-        assert!(html.contains("FACTORY BANK"));
-        // The factory bank is the cartridge in the slot, and the only one
-        // on the shelf; its voices have not been read yet.
-        assert!(html.contains("data-card=\"factory\" aria-pressed=\"true\""));
-        assert!(html.contains("THE FACTORY BANK"));
-        // The slot, the factory bank on the shelf, and the saved programs as
-        // a RAM.
-        assert!(html.contains("data-card=\"saved\""));
-        assert_eq!(html.matches("class=\"cart\"").count(), 3);
-
-        state.resources = vec![(CARTRIDGE.to_owned(), true)];
-        state.grants = vec![crate::model::Grant {
-            id: "g1".into(),
-            name: "ROM1A.syx".into(),
-            resource: CARTRIDGE.into(),
-        }];
-        let html = page(&state);
-        assert!(html.contains("REPLACE…"));
-        assert!(html.contains("YOUR CARTRIDGE"));
-        assert!(!html.contains("data-action=\"clear-cartridge\" disabled"));
-        assert!(html.contains("data-card=\"g1\" aria-pressed=\"false\""));
-        assert!(html.contains("ROM1A.syx"));
-        assert!(html.contains("INSTALL TO READ"), "a file not read yet");
-        // Once SETUP has installed a grant it names the source and lights
-        // that cartridge, as long as the host still lists the grant.
-        state.installed_grant = Some("g1".into());
-        let html = page(&state);
-        assert!(html.contains("<dt>SOURCE</dt><dd>ROM1A.syx</dd>"));
-        assert!(html.contains("data-card=\"g1\" aria-pressed=\"true\""));
-        state.installed_grant = Some("gone".into());
-        assert!(page(&state).contains("YOUR CARTRIDGE"));
-        state.installed_grant = Some("g1".into());
-
-        // While the host is working, nothing can be pressed twice.
-        state.busy = "Installing…".into();
-        let html = page(&state);
-        assert!(html.contains("data-action=\"choose-cartridge\" disabled"));
-        assert!(
-            html.contains("data-card=\"g1\" aria-pressed=\"true\" title=\"ROM1A.syx\" disabled")
-        );
-        assert!(html.contains("class=\"note busy\">Installing…"));
+        assert!(html.contains("<h2>CARTRIDGE BAYS</h2>"));
+        assert_eq!(html.matches("class=\"cart empty\"").count(), CARTRIDGE_BAYS);
+        assert!(html.contains("data-card=\"0\" data-bay=\"0\" aria-pressed=\"false\""));
+        assert!(html.contains("data-card=\"7\" data-bay=\"7\""));
+        assert!(html.contains("Every bay is empty"));
+        assert!(!html.contains("data-card=\"8\""), "nothing saved yet");
+        assert!(!html.contains("class=\"modal\""));
     }
 
     #[test]
-    fn a_cartridge_opens_its_voices_in_two_banks() {
+    fn a_bay_opens_what_it_holds_and_the_keys_that_change_it() {
         let mut state = state();
         state.surface = "config".into();
+        let mut instance = state.instance.clone().expect("an instance");
+        instance.banks = vec![crate::model::Bank {
+            id: "bank-3".into(),
+            name: "Cartridge 3".into(),
+        }];
+        instance.sounds = (1..=40)
+            .map(|number| crate::model::Sound {
+                id: format!("program-{number:03}"),
+                name: format!("VOICE {number}"),
+                bank: "bank-3".into(),
+                editable: true,
+            })
+            .collect();
+        state.instance = Some(instance);
+        state.bay_names.insert(2, "ROM1A.syx".into());
         state.grants = vec![crate::model::Grant {
             id: "g1".into(),
             name: "ROM1A.syx".into(),
             resource: CARTRIDGE.into(),
         }];
-        let names: Vec<String> = (1..=40).map(|n| format!("VOICE {n}")).collect();
-        state.catalogs.insert("g1".into(), names);
-        state
-            .catalogs
-            .insert("factory".into(), vec!["RF TINES".into(), "RF SUB".into()]);
-        // The label reads the first and last voice of each bank.
-        let html = page(&state);
-        assert!(html.contains("VOICE 1 — VOICE 32"));
-        assert!(html.contains("VOICE 33 — VOICE 40"));
-        assert!(html.contains("RF TINES — RF SUB"));
-        assert!(!html.contains("class=\"modal\""));
 
-        state.modal = Some("g1".into());
+        let html = page(&state);
+        // Bay three is filled, and named after the file that went into it.
+        assert_eq!(
+            html.matches("class=\"cart empty\"").count(),
+            CARTRIDGE_BAYS - 1
+        );
+        assert!(
+            html.contains(
+                "data-card=\"2\" data-bay=\"2\" aria-pressed=\"true\" title=\"ROM1A.syx\""
+            )
+        );
+        assert!(html.contains("VOICE 1 &#8212; VOICE 32") || html.contains("VOICE 1 — VOICE 32"));
+        assert!(html.contains("One bay filled"));
+
+        state.modal = Some(2);
         let html = page(&state);
         assert!(html.contains("class=\"modal\" data-action=\"close-modal\""));
         assert!(html.contains("<h3>ROM1A.syx</h3>"));
-        assert!(html.contains("40 VOICES · 2 BANKS"));
+        assert!(html.contains("BAY 3 &#183; 40 VOICES") || html.contains("BAY 3 · 40 VOICES"));
         assert!(html.contains("BANK 1</h4>") && html.contains("BANK 2</h4>"));
         assert!(html.contains("<span class=\"n\">01</span><span class=\"name\">VOICE 1</span>"));
-        assert!(html.contains("<span class=\"n\">08</span><span class=\"name\">VOICE 40</span>"));
-        // A file that is not in the slot can be put in from here.
-        assert!(html.contains("data-grant=\"g1\">PUT IT IN"));
-        assert!(html.contains("data-action=\"close-modal\">CLOSE"));
+        assert!(html.contains("data-action=\"choose-cartridge\" data-bay=\"2\">REPLACE"));
+        assert!(html.contains("data-action=\"clear-cartridge\" data-bay=\"2\">TAKE IT OUT"));
+        assert!(html.contains("data-grant=\"g1\" data-bay=\"2\""));
 
-        // The factory bank offers to play again; the one in the slot says so.
-        state.modal = Some("factory".into());
+        // An empty bay offers to be filled, and nothing to be taken out.
+        state.modal = Some(5);
         let html = page(&state);
-        assert!(html.contains("IN THE SLOT"));
-        state.resources = vec![(CARTRIDGE.to_owned(), true)];
-        state.installed_grant = Some("g1".into());
+        assert!(html.contains("BAY 6 &#183; EMPTY") || html.contains("BAY 6 · EMPTY"));
+        assert!(html.contains("data-action=\"choose-cartridge\" data-bay=\"5\">INSTALL"));
+        assert!(!html.contains("clear-cartridge"));
+
+        // While the host is working, nothing can be pressed twice.
+        state.busy = "Putting the cartridge in".into();
         let html = page(&state);
-        assert!(html.contains("data-action=\"clear-cartridge\">PLAY THE FACTORY BANK"));
-        // A card nothing knows about opens nothing.
-        state.modal = Some("nope".into());
-        assert!(!page(&state).contains("class=\"modal\""));
+        assert!(html.contains("data-bay=\"5\" aria-pressed=\"false\" title=\"BAY 6\" disabled"));
+        assert!(html.contains("class=\"note busy\">Putting the cartridge in"));
+    }
+
+    /// The programs you saved are not a bay, but they are a cartridge of
+    /// yours, so the rack ends with the data cartridge they would be on.
+    #[test]
+    fn what_you_saved_sits_at_the_end_of_the_rack() {
+        let mut state = state();
+        state.surface = "config".into();
+        let mut instance = state.instance.clone().expect("an instance");
+        instance.sounds = vec![crate::model::Sound {
+            id: "custom.user.rf7-001".into(),
+            name: "MY TINES".into(),
+            bank: "bank-user".into(),
+            editable: true,
+        }];
+        state.instance = Some(instance);
+        let html = page(&state);
+        assert!(html.contains("data-card=\"8\""));
+        assert!(html.contains(">DATA</text>"), "a data cartridge, not a ROM");
+        state.modal = Some(CARTRIDGE_BAYS);
+        let html = page(&state);
+        assert!(html.contains("<h3>YOUR PROGRAMS</h3>"));
+        assert!(html.contains("1 SAVED FROM THE EDITOR"));
+        assert!(html.contains("MY TINES"));
+    }
+
+    /// The library: the banks down one side, the programs of the one showing
+    /// down the other.
+    #[test]
+    fn the_library_shows_one_banks_programs_beside_the_list_of_banks() {
+        let mut state = state();
+        let mut instance = state.instance.clone().expect("an instance");
+        instance.banks = vec![
+            crate::model::Bank {
+                id: "bank-1".into(),
+                name: "Cartridge 1".into(),
+            },
+            crate::model::Bank {
+                id: "bank-user".into(),
+                name: "Your programs".into(),
+            },
+        ];
+        instance.sounds = vec![
+            crate::model::Sound {
+                id: "program-001".into(),
+                name: "BRASS 1".into(),
+                bank: "bank-1".into(),
+                editable: true,
+            },
+            crate::model::Sound {
+                id: "custom.user.rf7-001".into(),
+                name: "MINE".into(),
+                bank: "bank-user".into(),
+                editable: true,
+            },
+        ];
+        instance.selected = Some("program-001".into());
+        state.instance = Some(instance);
+        state.page = "programs".into();
+
+        let html = page(&state);
+        assert!(html.contains("<h2>BANKS</h2>"));
+        assert!(html.contains("data-bank=\"bank-1\" aria-pressed=\"true\""));
+        assert!(html.contains("data-bank=\"bank-user\" aria-pressed=\"false\""));
+        assert!(html.contains("class=\"bank playing\""), "the one playing");
+        assert!(html.contains("<span class=\"count\">1</span>"));
+        // Only the shown bank's programs are drawn.
+        assert!(html.contains("data-sound=\"program-001\""));
+        assert!(!html.contains("data-sound=\"custom.user.rf7-001\""));
+
+        state.bank = Some("bank-user".into());
+        let html = page(&state);
+        assert!(html.contains("<h2>YOUR PROGRAMS</h2>"));
+        assert!(html.contains("data-sound=\"custom.user.rf7-001\""));
+        assert!(!html.contains("data-sound=\"program-001\""));
+        assert!(
+            html.contains("stripe amber"),
+            "your own bank is the amber one"
+        );
     }
 
     #[test]

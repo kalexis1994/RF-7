@@ -35,7 +35,7 @@ pub const MAX_EVENTS: usize = 256;
 /// Sized for the editor: a hundred and forty fields with their labels and
 /// hints, and the thirty-two algorithm options, come to about twenty
 /// kilobytes.
-pub const TRANSFER_BYTES: usize = 65_536;
+pub const TRANSFER_BYTES: usize = 262_144;
 /// The largest library file RF-7 will take from the host. Four cartridges of
 /// bulk dumps is already past [`MAX_VOICES`]; the rest is slack so an oversized
 /// collection is read and capped rather than refused for its size alone.
@@ -52,7 +52,27 @@ const STATE_FIRST_BYTES: usize = 20;
 const STATE_ID_MAX: usize = 255;
 pub const PARAMETER_GAIN: u32 = parameters::GAIN;
 pub const PARAMETER_COUNT: usize = parameters::COUNT;
-pub const RESOURCE_CARTRIDGE: &str = "cartridge";
+/// Cartridges RF-7 holds at once. The instrument had one slot; this is a
+/// rack of bays, and what plays is all of them in order.
+pub const CARTRIDGE_BAYS: usize = 8;
+/// The resource each bay is declared as. Bay one keeps the name RF-7 has
+/// always used, so a cartridge installed before there were bays stays put.
+pub const CARTRIDGE_RESOURCES: [&str; CARTRIDGE_BAYS] = [
+    "cartridge",
+    "cartridge-2",
+    "cartridge-3",
+    "cartridge-4",
+    "cartridge-5",
+    "cartridge-6",
+    "cartridge-7",
+    "cartridge-8",
+];
+pub const RESOURCE_CARTRIDGE: &str = CARTRIDGE_RESOURCES[0];
+
+/// Which bay a resource id names.
+pub fn cartridge_bay(id: &str) -> Option<usize> {
+    CARTRIDGE_RESOURCES.iter().position(|name| *name == id)
+}
 /// What the editor opens when asked for a program that does not exist yet.
 const NEW_PROGRAM_NAME: &str = "RF NEW";
 
@@ -68,9 +88,14 @@ pub struct Rf7Processor {
     selected_custom: Option<String>,
     /// One entry per declared parameter, always in its declared range.
     values: [f64; PARAMETER_COUNT],
-    /// A cartridge arriving in pieces on the control thread.
+    /// A cartridge arriving in pieces on the control thread, and the bay it
+    /// is going into.
     incoming: Vec<u8>,
-    receiving: bool,
+    receiving: Option<usize>,
+    /// How many voices each bay put into the library, and how many the file
+    /// in it held — which can be more than the library had room for.
+    bay_length: [usize; CARTRIDGE_BAYS],
+    bay_found: [usize; CARTRIDGE_BAYS],
     maximum_frames: u32,
     channels: u32,
     /// Whether the block being rendered passed the pre-stage's checks; a
@@ -88,7 +113,9 @@ impl Default for Rf7Processor {
             selected_custom: None,
             values: parameters::defaults(),
             incoming: Vec::new(),
-            receiving: false,
+            receiving: None,
+            bay_length: [0; CARTRIDGE_BAYS],
+            bay_found: [0; CARTRIDGE_BAYS],
             maximum_frames: 0,
             channels: 0,
             block_valid: false,
@@ -99,7 +126,40 @@ impl Default for Rf7Processor {
 impl Rf7Processor {
     /// The programs RackForge should offer, as Preset Catalog JSON.
     pub fn catalog(&self, destination: &mut [u8]) -> Option<usize> {
-        catalog::write(&self.library, &self.custom, destination)
+        catalog::write(&self.library, &self.bay_length, &self.custom, destination)
+    }
+
+    /// How many voices each bay contributed, in bay order.
+    pub fn bays(&self) -> &[usize; CARTRIDGE_BAYS] {
+        &self.bay_length
+    }
+
+    /// Put a cartridge in a bay, or take the one there out.
+    ///
+    /// A bay's voices are one stretch of the library, so this replaces that
+    /// stretch and leaves every other bay where it was — which is what keeps
+    /// a program number pointing at the same program when another bay
+    /// changes. With every bay empty the factory bank plays again.
+    fn install_bay(&mut self, bay: usize, cartridge: &Library) {
+        if bay >= CARTRIDGE_BAYS {
+            return;
+        }
+        if self.bay_length.iter().all(|length| *length == 0) {
+            // The factory bank is standing in; the first cartridge is not
+            // spliced into it, it replaces it.
+            self.library = Library::from_voices(&[]);
+        }
+        let at: usize = self.bay_length[..bay].iter().sum();
+        let remove = self.bay_length[bay];
+        self.bay_length[bay] = self.library.splice(at, remove, cartridge);
+        self.bay_found[bay] = cartridge.found();
+        if self.bay_length.iter().all(|length| *length == 0) {
+            self.library = factory_library();
+            self.bay_found = [0; CARTRIDGE_BAYS];
+        } else {
+            self.library.set_found(self.bay_found.iter().sum());
+        }
+        self.adopt();
     }
 
     /// How many library programs this instance currently offers.
@@ -237,8 +297,8 @@ impl Rf7Processor {
         }
     }
 
-    fn adopt(&mut self, library: Library) {
-        self.library = library;
+    /// Take the library as it now stands into the engine.
+    fn adopt(&mut self) {
         self.program = self.program.min(self.library.len().saturating_sub(1));
         if let Some(engine) = &mut self.engine {
             engine.load_library(self.library.clone());
@@ -381,23 +441,24 @@ impl ParallelProcessor for Rf7Processor {
     }
 
     fn begin_resource(&mut self, id: &str, total_bytes: u64) -> bool {
-        if id != RESOURCE_CARTRIDGE || total_bytes > MAX_RESOURCE_BYTES as u64 {
+        let Some(bay) = cartridge_bay(id).filter(|_| total_bytes <= MAX_RESOURCE_BYTES as u64)
+        else {
             return false;
-        }
+        };
         self.incoming.clear();
         self.incoming.reserve(total_bytes as usize);
-        self.receiving = true;
+        self.receiving = Some(bay);
         true
     }
 
     fn write_resource(&mut self, offset: u64, bytes: &[u8]) -> bool {
         // Only sequential delivery is accepted: a gap would leave the buffer
         // holding whatever happened to be at that offset before.
-        if !self.receiving
+        if self.receiving.is_none()
             || offset != self.incoming.len() as u64
             || self.incoming.len() + bytes.len() > MAX_RESOURCE_BYTES
         {
-            self.receiving = false;
+            self.receiving = None;
             return false;
         }
         self.incoming.extend_from_slice(bytes);
@@ -405,26 +466,25 @@ impl ParallelProcessor for Rf7Processor {
     }
 
     fn end_resource(&mut self) -> bool {
-        if !self.receiving {
+        let Some(bay) = self.receiving.take() else {
             return false;
-        }
-        self.receiving = false;
+        };
         // Bulk dumps, a single voice, a headerless chip image, or a ZIP of
         // any of those: whichever shape the user installed, the programs
         // come out the same way. The scratch an archive is unpacked through
         // is taken here, on the control thread, and given back at once.
         let mut scratch = vec![0; SCRATCH_BYTES];
-        let Ok(library) = decode_cartridge(&self.incoming, &mut scratch) else {
+        let Ok(cartridge) = decode_cartridge(&self.incoming, &mut scratch) else {
             self.incoming = Vec::new();
             return false;
         };
         self.incoming = Vec::new();
-        self.adopt(library);
+        self.install_bay(bay, &cartridge);
         true
     }
 
     fn write_program_catalog(&mut self, destination: &mut [u8]) -> Option<usize> {
-        catalog::write(&self.library, &self.custom, destination)
+        catalog::write(&self.library, &self.bay_length, &self.custom, destination)
     }
 
     fn load_preset(&mut self, id: &str) -> bool {
@@ -856,7 +916,7 @@ export_parallel_processor!(
     max_output_channels = 2,
     max_midi_events = 256,
     max_parameter_events = 256,
-    max_transfer_bytes = 65_536,
+    max_transfer_bytes = 262_144,
     midi2 = {
         max_events = 256,
         families = MIDI_FAMILY_NOTE

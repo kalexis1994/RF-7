@@ -8,8 +8,8 @@ mod common;
 /// The plugin driven the way a host drives it, over buffers of its own.
 use common::Host as Rf7Processor;
 use rf7_plugin::{
-    MAX_FRAMES, MAX_RESOURCE_BYTES, PARAMETER_COUNT, PARAMETER_GAIN, RESOURCE_CARTRIDGE,
-    TRANSFER_BYTES, parameters,
+    CARTRIDGE_RESOURCES, MAX_FRAMES, MAX_RESOURCE_BYTES, PARAMETER_COUNT, PARAMETER_GAIN,
+    RESOURCE_CARTRIDGE, TRANSFER_BYTES, parameters,
 };
 use rf7_voice::{
     Cartridge, FACTORY_VOICES, MAX_VOICES, VOICES_PER_CARTRIDGE, Voice, encode_bulk_dump,
@@ -28,7 +28,11 @@ fn raw_bank(name: &[u8; 10]) -> Vec<u8> {
 }
 
 fn deliver(processor: &mut Rf7Processor, bytes: &[u8]) -> bool {
-    if !processor.begin_resource(RESOURCE_CARTRIDGE, bytes.len() as u64) {
+    deliver_to(processor, RESOURCE_CARTRIDGE, bytes)
+}
+
+fn deliver_to(processor: &mut Rf7Processor, resource: &str, bytes: &[u8]) -> bool {
+    if !processor.begin_resource(resource, bytes.len() as u64) {
         return false;
     }
     for (index, chunk) in bytes.chunks(512).enumerate() {
@@ -494,16 +498,73 @@ fn a_zip_of_banks_installs_as_the_banks_inside_it() {
     assert_eq!(processor.program_count(), FACTORY_VOICES);
 }
 
+/// The bays are a rack: what plays is all of them in order, and changing one
+/// leaves the others exactly where they were.
+#[test]
+fn the_bays_play_in_order_and_do_not_disturb_each_other() {
+    let mut processor = prepared();
+    assert_eq!(processor.program_count(), FACTORY_VOICES);
+
+    // A cartridge in bay three, while one and two are empty.
+    assert!(deliver_to(
+        &mut processor,
+        CARTRIDGE_RESOURCES[2],
+        &raw_bank(b"THIRD BAY ")
+    ));
+    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
+    assert_eq!(processor.bays()[2], VOICES_PER_CARTRIDGE);
+    let json = catalog(&mut processor);
+    assert!(json.contains("\"id\":\"bank-3\",\"name\":\"Cartridge 3\""));
+    assert!(!json.contains("bank-factory"), "a bay is filled");
+
+    // One in bay one goes in front of it, without moving what bay three holds.
+    assert!(deliver_to(
+        &mut processor,
+        CARTRIDGE_RESOURCES[0],
+        &raw_bank(b"FIRST BAY ")
+    ));
+    assert_eq!(processor.program_count(), 2 * VOICES_PER_CARTRIDGE);
+    let json = catalog(&mut processor);
+    assert!(json.contains("\"id\":\"program-001\",\"name\":\"FIRST BAY\""));
+    assert!(json.contains("\"id\":\"program-033\",\"name\":\"THIRD BAY\""));
+
+    // Replacing bay one with a longer cartridge pushes bay three along.
+    let mut two_banks = raw_bank(b"WIDER ONE ");
+    two_banks.extend_from_slice(&raw_bank(b"WIDER TWO "));
+    assert!(deliver_to(
+        &mut processor,
+        CARTRIDGE_RESOURCES[0],
+        &two_banks
+    ));
+    assert_eq!(processor.program_count(), 3 * VOICES_PER_CARTRIDGE);
+    let json = catalog(&mut processor);
+    assert!(json.contains("\"id\":\"program-065\",\"name\":\"THIRD BAY\""));
+    assert!(processor.load_preset("program-065"));
+    assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
+
+    // Eight bays fill the library, and a ninth resource is not ours.
+    let mut processor = prepared();
+    for resource in CARTRIDGE_RESOURCES {
+        assert!(deliver_to(
+            &mut processor,
+            resource,
+            &raw_bank(b"EVERY BAY ")
+        ));
+    }
+    assert_eq!(processor.program_count(), MAX_VOICES);
+    assert!(!processor.begin_resource("cartridge-9", 16));
+}
+
 #[test]
 fn a_library_larger_than_rf7_offers_is_capped_rather_than_refused() {
     let mut bytes = Vec::new();
-    for _ in 0..6 {
+    for _ in 0..10 {
         bytes.extend_from_slice(&raw_bank(b"MANY      "));
     }
     let mut processor = prepared();
     assert!(deliver(&mut processor, &bytes));
     assert_eq!(processor.program_count(), MAX_VOICES);
-    assert!(processor.load_preset("program-128"));
+    assert!(processor.load_preset("program-256"));
 }
 
 #[test]

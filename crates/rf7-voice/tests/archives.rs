@@ -275,13 +275,14 @@ fn a_file_larger_than_the_scratch_is_passed_over() {
 /// More voices than RF-7 can hold are counted and then left behind.
 #[test]
 fn an_archive_of_more_banks_than_fit_keeps_what_it_can() {
+    const BANKS: usize = 10;
     let mut archive = Zip::default();
-    for index in 0..6 {
-        archive = archive.stored(&format!("bank{index}.syx"), &bank(index * 4));
+    for index in 0..BANKS {
+        archive = archive.stored(&format!("bank{index}.syx"), &bank(index * 3));
     }
     let library = read(&archive.finish()).unwrap();
     assert_eq!(library.len(), MAX_VOICES);
-    assert_eq!(library.found(), 6 * VOICES_PER_CARTRIDGE);
+    assert_eq!(library.found(), BANKS * VOICES_PER_CARTRIDGE);
 }
 
 /// Everything that is not an archive still reads exactly as it did.

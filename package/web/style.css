@@ -445,7 +445,7 @@ h1, h2, h3, p { margin: 0; }
    page has: below that, one column, not a page that hangs off the panel. */
 .page-operators { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
 .page-perform { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
-.page-programs { grid-template-columns: minmax(0, 1fr); }
+
 
 /* The pages answer to the panel, not to the window: the host frames the
    panel, and the frame is what a control has to fit inside. */
@@ -1297,15 +1297,13 @@ h1, h2, h3, p { margin: 0; }
 
 /* ---- the cartridge shelf ----------------------------------------------- */
 
-/* The slot: the cartridge that is playing beside the facts and the keys. */
-.page-config .slot {
+/* The rack: eight bays and, at the end, what you saved. */
+.rack {
+  width: 100%;
   display: grid;
-  grid-template-columns: minmax(120px, 150px) minmax(0, 1fr);
-  gap: 6px 16px;
-  align-items: center;
+  grid-template-columns: repeat(auto-fill, minmax(min(124px, 100%), 1fr));
+  gap: 12px 14px;
 }
-
-.page-config .slot .facts { grid-template-columns: auto minmax(0, 1fr); }
 
 .cart {
   padding: 0;
@@ -1320,13 +1318,10 @@ h1, h2, h3, p { margin: 0; }
 .cart:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
 .cart:disabled { cursor: default; opacity: 0.6; }
 .cart[aria-pressed="true"] svg { filter: drop-shadow(0 0 10px rgba(86, 183, 230, 0.5)); }
+/* An empty bay sits back until it is pointed at. */
+.cart.empty svg { opacity: 0.5; }
+.cart.empty:hover:not(:disabled) svg { opacity: 0.85; }
 
-.shelf {
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(128px, 100%), 1fr));
-  gap: 12px 14px;
-}
 
 /* A cartridge's voices, over the panel. */
 .modal {
@@ -1414,7 +1409,75 @@ h1, h2, h3, p { margin: 0; }
 .modal-keys { margin-top: 8px; }
 .modal-keys .key.lit { display: inline-flex; align-items: center; gap: 8px; }
 
+/* ---- the library: banks beside their programs ------------------------- */
+
+.page-programs {
+  grid-template-columns: minmax(140px, 210px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.banks {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  max-height: clamp(220px, 62vh, 620px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3d44 transparent;
+}
+
+.bank {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid #0a0b0e;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.16)), #202228;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  text-align: left;
+  cursor: pointer;
+  transition: background 110ms ease, color 110ms ease;
+}
+
+.bank .name {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #cec9bd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bank .count {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 9.5px;
+  color: #6f6b64;
+}
+
+.bank:hover:not(:disabled) { filter: brightness(1.18); }
+
+.bank[aria-pressed="true"] {
+  background: linear-gradient(180deg, rgba(86, 183, 230, 0.3), rgba(86, 183, 230, 0.1)), #16222a;
+  box-shadow: inset 0 0 12px rgba(86, 183, 230, 0.2);
+}
+
+.bank[aria-pressed="true"] .name { color: #eaf7ff; }
+.bank[aria-pressed="true"] .count { color: var(--blue); }
+
+/* The bank the program that is playing came out of. */
+.bank.playing .name::after {
+  content: " cf";
+  color: var(--lcd-ink);
+  font-size: 8px;
+  vertical-align: middle;
+}
+
 @media (max-width: 560px) {
   .modal-card { grid-template-columns: 1fr; }
   .modal-cart { width: 160px; margin: 0 auto; }
+  .page-programs { grid-template-columns: minmax(0, 1fr); }
+  .banks { max-height: 180px; }
 }

@@ -121,8 +121,8 @@ overwritten.
   with no dependencies. Reads the index off a two-operator recording of any
   level.
 - `rf7-plugin`: the RackForge adapter — `parallel_render_v1`, MIDI 1.0 and
-  2.0, versioned state, a program catalog built from the installed cartridge
-  and the saved programs, and the declarative voice editor the host draws.
+  2.0, versioned state, eight cartridge bays published as a bank each, and the
+  declarative voice editor the host draws.
 - `rf7-ui`: the PLAY surface, Rust compiled to WebAssembly: the host's
   context read into state, state drawn as HTML, the algorithm drawn as SVG.
 - `rf7-lab`: rendering, WAV, JSON reports, cartridge inspection, packaging and

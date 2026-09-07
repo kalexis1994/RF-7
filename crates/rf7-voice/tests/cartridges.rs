@@ -201,15 +201,54 @@ fn a_single_voice_dump_is_a_library_of_one() {
     assert_eq!(library.voice(1), None);
 }
 
+/// One bay's voices are one stretch of the library: replacing them leaves
+/// every other bay where it was.
+#[test]
+fn splicing_replaces_one_stretch_and_moves_the_rest() {
+    let library = |first: usize, count: usize| {
+        let voices: Vec<_> = (0..count)
+            .map(|index| factory_voice(first + index))
+            .collect();
+        Library::from_voices(&voices)
+    };
+    let mut rack = library(0, 3);
+    // A second bay after the first.
+    assert_eq!(rack.splice(3, 0, &library(10, 2)), 2);
+    assert_eq!(rack.len(), 5);
+    assert_eq!(rack.voice(3), Some(&factory_voice(10)));
+    // The first bay gets a bigger cartridge; the second moves along.
+    assert_eq!(rack.splice(0, 3, &library(20, 5)), 5);
+    assert_eq!(rack.len(), 7);
+    assert_eq!(rack.voice(0), Some(&factory_voice(20)));
+    assert_eq!(rack.voice(5), Some(&factory_voice(10)));
+    // And emptied, which is what taking a cartridge out does.
+    assert_eq!(rack.splice(0, 5, &Library::from_voices(&[])), 0);
+    assert_eq!(rack.len(), 2);
+    assert_eq!(rack.voice(0), Some(&factory_voice(10)));
+
+    // Past the cap the tail falls off rather than the insertion.
+    let mut full = library(0, 4);
+    let long: Vec<_> = (0..MAX_VOICES)
+        .map(|index| factory_voice(index % FACTORY_VOICES))
+        .collect();
+    assert_eq!(
+        full.splice(2, 0, &Library::from_voices(&long)),
+        MAX_VOICES - 2
+    );
+    assert_eq!(full.len(), MAX_VOICES);
+    assert_eq!(full.voice(2), Some(&factory_voice(0)));
+}
+
 #[test]
 fn more_voices_than_rf7_offers_are_counted_and_capped() {
+    const BANKS: usize = 10;
     let mut bytes = Vec::new();
-    for bank in 0..6 {
+    for bank in 0..BANKS {
         bytes.extend_from_slice(&raw_bank(bank));
     }
-    let library = decode_library(&bytes).expect("six banks must open");
+    let library = decode_library(&bytes).expect("ten banks must open");
     assert_eq!(library.len(), MAX_VOICES);
-    assert_eq!(library.found(), 6 * VOICES_PER_CARTRIDGE);
+    assert_eq!(library.found(), BANKS * VOICES_PER_CARTRIDGE);
     assert_eq!(library.voice(MAX_VOICES), None);
 }
 

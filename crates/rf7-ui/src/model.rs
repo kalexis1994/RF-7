@@ -247,26 +247,66 @@ pub struct State {
     /// COMPARE is down: the program as it opened is what plays and what the
     /// knobs show, and nothing can be edited until it is released.
     pub comparing: bool,
-    /// The grant SETUP installed last, so the cartridge can be named. The
-    /// host reports only that something is installed.
-    pub installed_grant: Option<String>,
     /// The operator copied last, if any.
     pub clipboard: Option<Clipboard>,
-    /// The voices of every cartridge SETUP has seen play, by the grant that
-    /// installed it — and under [`FACTORY`] the factory bank's. The host
-    /// only ever tells the surface what is playing now; this is how a
-    /// cartridge on the shelf can show its label before it is put back in.
-    pub catalogs: BTreeMap<String, Vec<String>>,
-    /// The cartridge whose voices are open on the setup surface, if any:
-    /// a grant id, [`FACTORY`] or [`SAVED`].
-    pub modal: Option<String>,
+    /// What file went into each bay, so a bay can show the cartridge's name
+    /// rather than its number. The host says only that a bay is filled; what
+    /// is in it comes from the programs, and what it was called from here.
+    pub bay_names: BTreeMap<usize, String>,
+    /// The bay whose voices are open on the setup surface, if any.
+    pub modal: Option<usize>,
+    /// The bank the programs page is showing. Empty means the one the
+    /// playing program is in.
+    pub bank: Option<String>,
 }
 
-/// The catalog key of the factory bank.
-pub const FACTORY: &str = "factory";
-/// The catalog key of the saved programs, which are not a cartridge the
-/// host installs but are shown as one.
-pub const SAVED: &str = "saved";
+/// Cartridges RF-7 holds at once, and the resource each bay is declared as.
+/// The plugin's manifest is where these are declared; the surface names one
+/// to ask the host for a file to put in it.
+pub const CARTRIDGE_BAYS: usize = 8;
+pub const BAY_RESOURCES: [&str; CARTRIDGE_BAYS] = [
+    "cartridge",
+    "cartridge-2",
+    "cartridge-3",
+    "cartridge-4",
+    "cartridge-5",
+    "cartridge-6",
+    "cartridge-7",
+    "cartridge-8",
+];
+/// The one bank there is while every bay is empty.
+pub const FACTORY_BANK: &str = "bank-factory";
+/// The bank the programs you saved are in.
+pub const USER_BANK: &str = "bank-user";
+
+/// One cartridge bay, as the surface draws it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Bay {
+    pub index: usize,
+    /// The resource the host installs into.
+    pub resource: &'static str,
+    /// The catalog bank this bay's programs are published under.
+    pub bank: String,
+    /// The file installed here, as the surface remembers it.
+    pub name: Option<String>,
+    /// The programs this bay put in the library, in order.
+    pub voices: Vec<String>,
+}
+
+impl Bay {
+    pub fn filled(&self) -> bool {
+        !self.voices.is_empty()
+    }
+
+    /// What to call it: the file if that is remembered, else its number.
+    pub fn title(&self) -> String {
+        match &self.name {
+            Some(name) => name.clone(),
+            None if self.filled() => format!("CARTRIDGE {}", self.index + 1),
+            None => format!("BAY {}", self.index + 1),
+        }
+    }
+}
 
 impl State {
     /// Read a `context` message. Returns false if it is not for this plugin.
@@ -312,21 +352,120 @@ impl State {
         self.pending_fields.retain(|_, (_, answered)| !*answered);
         self.pending_parameters
             .retain(|_, (_, answered)| !*answered);
-        self.remember_catalog();
         true
     }
 
-    /// The library voices playing now — the programs that are not saved
-    /// ones — in catalog order.
-    pub fn library_names(&self) -> Vec<String> {
+    /// The programs in one bank, in catalog order.
+    pub fn bank_programs(&self, bank: &str) -> Vec<&Sound> {
         self.instance.as_ref().map_or_else(Vec::new, |instance| {
             instance
                 .sounds
                 .iter()
-                .filter(|sound| sound.id.starts_with("program-"))
-                .map(|sound| sound.name.clone())
+                .filter(|sound| sound.bank == bank)
                 .collect()
         })
+    }
+
+    /// The eight bays, filled or not: what is in each one and what it was
+    /// called. A bay's contents are the programs the plugin published under
+    /// that bay's bank, so the host is the authority and nothing is
+    /// remembered that the host could contradict.
+    pub fn bays(&self) -> Vec<Bay> {
+        BAY_RESOURCES
+            .iter()
+            .enumerate()
+            .map(|(index, resource)| {
+                let bank = format!("bank-{}", index + 1);
+                let voices = self
+                    .bank_programs(&bank)
+                    .iter()
+                    .map(|sound| sound.name.clone())
+                    .collect::<Vec<_>>();
+                Bay {
+                    index,
+                    resource,
+                    bank,
+                    name: self
+                        .bay_names
+                        .get(&index)
+                        .cloned()
+                        .filter(|_| !voices.is_empty()),
+                    voices,
+                }
+            })
+            .collect()
+    }
+
+    /// Every bank the host published, in the order it published them, with
+    /// how many programs each holds. A bank a program names but the catalog
+    /// forgot to declare is still a bank.
+    pub fn banks(&self) -> Vec<(String, String, usize)> {
+        let Some(instance) = &self.instance else {
+            return Vec::new();
+        };
+        let mut banks: Vec<(String, String)> = instance
+            .banks
+            .iter()
+            .map(|bank| (bank.id.clone(), bank.name.clone()))
+            .collect();
+        for sound in &instance.sounds {
+            if !banks.iter().any(|(id, _)| *id == sound.bank) {
+                banks.push((sound.bank.clone(), sound.bank.clone()));
+            }
+        }
+        banks
+            .into_iter()
+            .map(|(id, name)| {
+                let count = instance
+                    .sounds
+                    .iter()
+                    .filter(|sound| sound.bank == id)
+                    .count();
+                (id, name, count)
+            })
+            .filter(|(_, _, count)| *count > 0)
+            .collect()
+    }
+
+    /// The bank the programs page is showing: the one chosen, else the one
+    /// the playing program is in, else the first there is.
+    pub fn shown_bank(&self) -> Option<String> {
+        let banks = self.banks();
+        let known = |id: &str| banks.iter().any(|(bank, _, _)| bank == id);
+        if let Some(bank) = self.bank.as_deref().filter(|bank| known(bank)) {
+            return Some(bank.to_owned());
+        }
+        if let Some(bank) = self
+            .selected_sound()
+            .map(|sound| sound.bank.clone())
+            .filter(|bank| known(bank))
+        {
+            return Some(bank);
+        }
+        banks.first().map(|(id, _, _)| id.clone())
+    }
+
+    /// The bay names as one JSON object, for the browser's store.
+    pub fn bay_names_json(&self) -> Value {
+        Value::Object(
+            self.bay_names
+                .iter()
+                .map(|(bay, name)| (bay.to_string(), json!(name)))
+                .collect(),
+        )
+    }
+
+    pub fn bay_names_from_json(value: &Value) -> BTreeMap<usize, String> {
+        value
+            .as_object()
+            .map(|object| {
+                object
+                    .iter()
+                    .filter_map(|(bay, name)| Some((bay.parse().ok()?, name.as_str()?.to_owned())))
+                    .filter(|(bay, _): &(usize, String)| *bay < CARTRIDGE_BAYS)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The saved programs, in catalog order.
@@ -339,61 +478,6 @@ impl State {
                 .map(|sound| sound.name.clone())
                 .collect()
         })
-    }
-
-    /// File the voices playing now under the cartridge they came from: the
-    /// grant SETUP installed last while a cartridge is in, the factory bank
-    /// otherwise. Only the setup surface keeps this; the host names no
-    /// grant to the play surface.
-    fn remember_catalog(&mut self) {
-        // Until the host has said what is installed, the voices playing
-        // cannot be filed: a cartridge may be in, under a grant remembered
-        // from the last session, and the factory bank must not take them.
-        if self.surface != "config" || self.instance.is_none() || self.resources.is_empty() {
-            return;
-        }
-        let names = self.library_names();
-        if names.is_empty() {
-            return;
-        }
-        let key = if self.resource_installed("cartridge") {
-            match &self.installed_grant {
-                Some(grant) => grant.clone(),
-                None => return,
-            }
-        } else {
-            FACTORY.to_owned()
-        };
-        self.catalogs.insert(key, names);
-    }
-
-    /// The remembered catalogs as one JSON object, for the browser's store.
-    pub fn catalogs_json(&self) -> Value {
-        Value::Object(
-            self.catalogs
-                .iter()
-                .map(|(key, names)| (key.clone(), json!(names)))
-                .collect(),
-        )
-    }
-
-    pub fn catalogs_from_json(value: &Value) -> BTreeMap<String, Vec<String>> {
-        value
-            .as_object()
-            .map(|object| {
-                object
-                    .iter()
-                    .filter_map(|(key, names)| {
-                        let names: Vec<String> = names
-                            .as_array()?
-                            .iter()
-                            .filter_map(|name| name.as_str().map(str::to_owned))
-                            .collect();
-                        (!names.is_empty()).then(|| (key.clone(), names))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     pub fn apply_parameters(&mut self, result: &Value) -> bool {
@@ -491,16 +575,6 @@ impl State {
             .collect()
     }
 
-    /// The name SETUP can give the installed cartridge: the grant it
-    /// installed last, if the host still lists it.
-    pub fn installed_cartridge_name(&self) -> Option<&str> {
-        let id = self.installed_grant.as_deref()?;
-        self.grants
-            .iter()
-            .find(|grant| grant.id == id)
-            .map(|grant| grant.name.as_str())
-    }
-
     pub fn parameter_value(&self, index: usize) -> Option<f64> {
         if let Some((value, _)) = self.pending_parameters.get(&index) {
             return Some(*value);
@@ -547,7 +621,6 @@ impl State {
                 ))
             })
             .collect();
-        self.remember_catalog();
         true
     }
 
@@ -939,54 +1012,72 @@ pub(crate) mod tests {
         assert_eq!(state.field_value("feedback"), Some(FieldValue::Integer(6)));
     }
 
+    /// The bays are what the plugin publishes: one bank each, so what is in
+    /// a bay is the host's answer and not something the surface remembers.
     #[test]
-    fn the_setup_surface_files_the_voices_under_the_cartridge_playing_them() {
+    fn a_bay_holds_the_programs_the_plugin_published_under_its_bank() {
         let mut state = State {
             surface: "config".into(),
-            resources: vec![("cartridge".into(), false)],
             ..State::default()
         };
-        let context = |names: &[&str]| {
-            json!({
+        let sound = |id: &str, name: &str, bank: &str| json!({"id": id, "name": name, "bank": bank, "editable": true});
+        assert!(state.apply_context(
+            &json!({
                 "instance": {
                     "plugin_id": "org.rackforge.rf7",
-                    "sounds": names.iter().enumerate().map(|(index, name)| json!({
-                        "id": format!("program-{:03}", index + 1), "name": name, "bank": "bank-1", "editable": true
-                    })).collect::<Vec<_>>()
+                    "banks": [
+                        {"id": "bank-1", "name": "Cartridge 1"},
+                        {"id": "bank-3", "name": "Cartridge 3"},
+                        {"id": "bank-user", "name": "Your programs"}
+                    ],
+                    "sounds": [
+                        sound("program-001", "BRASS 1", "bank-1"),
+                        sound("program-002", "BRASS 2", "bank-1"),
+                        sound("program-003", "PIANO 4", "bank-3"),
+                        sound("custom.user.rf7-001", "MINE", "bank-user")
+                    ],
+                    "selected_sound_id": "program-003"
                 }
-            })
-        };
-        assert!(state.apply_context(&context(&["RF TINES", "RF SUB"]), "org.rackforge.rf7"));
-        assert_eq!(state.catalogs.get(FACTORY).map(Vec::len), Some(2));
-        // A surface that opens onto a playing cartridge, before the host has
-        // said so, files nothing until it does.
-        let mut fresh = State {
-            surface: "config".into(),
-            installed_grant: Some("g1".into()),
-            ..State::default()
-        };
-        assert!(fresh.apply_context(&context(&["BRASS 1"]), "org.rackforge.rf7"));
-        assert!(fresh.catalogs.is_empty());
-        assert!(fresh.apply_resources(&json!([{"resource_id": "cartridge", "installed": true}])));
-        assert_eq!(fresh.catalogs.get("g1"), Some(&vec!["BRASS 1".to_owned()]));
-        // The host confirmed an install; its status has not been asked yet.
-        state.installed_grant = Some("g1".into());
-        state.set_resource_installed("cartridge", true);
-        assert!(state.apply_context(&context(&["BRASS 1"]), "org.rackforge.rf7"));
-        assert_eq!(state.catalogs.get("g1"), Some(&vec!["BRASS 1".to_owned()]));
+            }),
+            "org.rackforge.rf7"
+        ));
+        let bays = state.bays();
+        assert_eq!(bays.len(), CARTRIDGE_BAYS);
+        assert_eq!(bays[0].voices, ["BRASS 1", "BRASS 2"]);
+        assert_eq!(bays[0].resource, "cartridge");
+        assert!(bays[1].voices.is_empty(), "an empty bay");
+        assert_eq!(bays[2].voices, ["PIANO 4"]);
+        assert_eq!(bays[2].resource, "cartridge-3");
+        assert_eq!(state.saved_names(), ["MINE"]);
+
+        // A bay is named by the file that went into it, once one has.
+        assert_eq!(bays[0].title(), "CARTRIDGE 1");
+        assert_eq!(bays[1].title(), "BAY 2");
+        state.bay_names.insert(0, "ROM1A.syx".into());
+        assert_eq!(state.bays()[0].title(), "ROM1A.syx");
+        // A name for a bay that is empty is not shown.
+        state.bay_names.insert(1, "GONE.syx".into());
+        assert_eq!(state.bays()[1].title(), "BAY 2");
+        // And it round-trips through the browser's store.
+        let stored = state.bay_names_json();
+        assert_eq!(State::bay_names_from_json(&stored), state.bay_names);
+        assert!(State::bay_names_from_json(&json!({"9": "x", "a": "y"})).is_empty());
+
+        // The library page shows the bank the playing program is in until
+        // one is chosen, and then the one chosen.
+        assert_eq!(state.shown_bank().as_deref(), Some("bank-3"));
+        state.bank = Some("bank-user".into());
+        assert_eq!(state.shown_bank().as_deref(), Some("bank-user"));
+        state.bank = Some("bank-7".into());
         assert_eq!(
-            state.catalogs.get(FACTORY).map(Vec::len),
-            Some(2),
-            "untouched"
+            state.shown_bank().as_deref(),
+            Some("bank-3"),
+            "a bank that is gone falls back to what is playing"
         );
-        // The play surface keeps nothing; a grant no context named is not
-        // invented; the store round-trips.
-        state.surface = "play".into();
-        assert!(state.apply_context(&context(&["OTHER"]), "org.rackforge.rf7"));
-        assert_eq!(state.catalogs.len(), 2);
-        let json = state.catalogs_json();
-        assert_eq!(State::catalogs_from_json(&json), state.catalogs);
-        assert!(State::catalogs_from_json(&json!({"g9": [], "g8": "x"})).is_empty());
+        let banks = state.banks();
+        assert_eq!(banks.len(), 3);
+        assert_eq!(banks[0], ("bank-1".into(), "Cartridge 1".into(), 2));
+        assert_eq!(banks[2], ("bank-user".into(), "Your programs".into(), 1));
     }
 
     #[test]
@@ -1055,23 +1146,6 @@ pub(crate) mod tests {
             .fields
             .insert("nothing".into(), FieldValue::Integer(1));
         assert_eq!(state.paste_plan(1).len(), 1);
-    }
-
-    #[test]
-    fn the_installed_cartridge_is_named_only_while_the_host_still_lists_it() {
-        let mut state = State {
-            grants: vec![Grant {
-                id: "g1".into(),
-                name: "ROM1A.syx".into(),
-                resource: "cartridge".into(),
-            }],
-            ..State::default()
-        };
-        assert_eq!(state.installed_cartridge_name(), None);
-        state.installed_grant = Some("g1".into());
-        assert_eq!(state.installed_cartridge_name(), Some("ROM1A.syx"));
-        state.grants.clear();
-        assert_eq!(state.installed_cartridge_name(), None);
     }
 
     #[test]

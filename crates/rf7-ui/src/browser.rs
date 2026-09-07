@@ -2,7 +2,7 @@
 //! `postMessage`. Decisions live in the sibling modules; this one wires them.
 
 use crate::client::{self, Client};
-use crate::model::{Clipboard, FieldValue, State};
+use crate::model::{self, Clipboard, FieldValue, State};
 use crate::{PLUGIN_ID, PROTOCOL, render};
 use js_sys::{JSON, Object};
 use serde_json::{Value, json};
@@ -14,13 +14,12 @@ use web_sys::{
 };
 
 const SECTIONS: [&str; 3] = ["header", "tabs", "page"];
-/// Where the browser keeps the grant SETUP installed last.
-const INSTALLED_GRANT_KEY: &str = "rf7.cartridge.grant";
+/// Where the browser keeps what file went into which bay, so a bay can
+/// show the cartridge's name. The host says only that a bay is filled.
+const BAY_NAMES_KEY: &str = "rf7.cartridge.bays";
 /// Where the browser keeps the operator copied last, so it can be pasted
 /// into another program, or after the surface has been closed and opened.
 const CLIPBOARD_KEY: &str = "rf7.operator.clipboard";
-/// Where the browser keeps the voices of every cartridge SETUP has seen.
-const CATALOGS_KEY: &str = "rf7.cartridge.catalogs";
 const POLL_MS: f64 = 3000.0;
 /// How far a pointer travels for a knob's whole range, in pixels. The other
 /// RackForge instruments use the same throw.
@@ -74,7 +73,10 @@ struct App {
     drag: Option<Drag>,
     envelope: Option<EnvelopeDrag>,
     /// The grant an install request is carrying, until the host answers.
-    installing: Option<String>,
+    /// The bay an install in flight is for, and the file going into it.
+    installing: Option<(usize, String)>,
+    /// The bay the file explorer was opened for.
+    choosing: Option<usize>,
 }
 type Shared = Rc<RefCell<App>>;
 
@@ -376,18 +378,27 @@ impl App {
                 }
             }
             ("choose-cartridge", _) => {
+                let Some(bay) = bay_number(element) else {
+                    return;
+                };
                 self.state.busy = "Waiting for the file explorer...".into();
                 self.state.notice.clear();
+                self.choosing = Some(bay);
                 self.client.queue(client::select_resource(
-                    render::CARTRIDGE,
+                    model::BAY_RESOURCES[bay],
                     &render::CARTRIDGE_EXTENSIONS,
                 ));
             }
             ("clear-cartridge", _) => {
-                self.state.busy = "Removing the cartridge...".into();
+                let Some(bay) = bay_number(element) else {
+                    return;
+                };
+                self.state.busy = "Taking the cartridge out...".into();
                 self.state.notice.clear();
                 self.state.modal = None;
-                self.client.queue(client::clear_resource(render::CARTRIDGE));
+                self.installing = Some((bay, String::new()));
+                self.client
+                    .queue(client::clear_resource(model::BAY_RESOURCES[bay]));
             }
             ("close-modal", _) => self.state.modal = None,
             // A press inside the dialog stays inside it.
@@ -407,14 +418,28 @@ impl App {
         }
     }
 
-    /// Install a file the host has already granted.
-    fn install_grant(&mut self, grant: &str) {
-        self.state.busy = "Installing the cartridge...".into();
+    /// Install a file the host has already granted, into one bay.
+    ///
+    /// The name is what the explorer answered with, when it was the
+    /// explorer: a grant made a moment ago is not in the list of grants
+    /// yet, which is only re-read on the next poll.
+    fn install_grant(&mut self, bay: usize, grant: &str, name: Option<&str>) {
+        if bay >= model::CARTRIDGE_BAYS {
+            return;
+        }
+        let name = name.map(str::to_owned).unwrap_or_else(|| {
+            self.state
+                .grants
+                .iter()
+                .find(|candidate| candidate.id == grant)
+                .map_or_else(String::new, |grant| grant.name.clone())
+        });
+        self.state.busy = "Putting the cartridge in...".into();
         self.state.notice.clear();
         self.state.modal = None;
-        self.installing = Some(grant.to_owned());
+        self.installing = Some((bay, name));
         self.client
-            .queue(client::install_resource(render::CARTRIDGE, grant));
+            .queue(client::install_resource(model::BAY_RESOURCES[bay], grant));
     }
 
     /// Keep the copied operator across programs and sessions of the surface.
@@ -430,22 +455,15 @@ impl App {
         self.state.clipboard = clipboard;
     }
 
-    /// Keep the cartridges' voices across sessions of the surface, once a
-    /// context has added to them.
-    fn remember_catalogs(&mut self) {
+    /// Remember what went into a bay, across sessions of the surface, so
+    /// the bay can be labelled with the cartridge rather than its number.
+    fn remember_bay(&mut self, bay: usize, name: Option<String>) {
+        match name.filter(|name| !name.is_empty()) {
+            Some(name) => self.state.bay_names.insert(bay, name),
+            None => self.state.bay_names.remove(&bay),
+        };
         if let Ok(Some(storage)) = self.window.local_storage() {
-            let _ = storage.set_item(CATALOGS_KEY, &self.state.catalogs_json().to_string());
-        }
-    }
-
-    /// Remember which grant is installed, across sessions of the surface.
-    fn remember_installed(&mut self, grant: Option<String>) {
-        self.state.installed_grant = grant.clone();
-        if let Ok(Some(storage)) = self.window.local_storage() {
-            let _ = match grant {
-                Some(grant) => storage.set_item(INSTALLED_GRANT_KEY, &grant),
-                None => storage.remove_item(INSTALLED_GRANT_KEY),
-            };
+            let _ = storage.set_item(BAY_NAMES_KEY, &self.state.bay_names_json().to_string());
         }
     }
 
@@ -454,15 +472,22 @@ impl App {
             return;
         };
         let Some(element) = target
-            .closest("[data-field],[data-param],[data-sound],[data-action],[data-tab],[data-grant],[data-card]")
+            .closest("[data-field],[data-param],[data-sound],[data-action],[data-tab],[data-grant],[data-card],[data-bank]")
             .ok()
             .flatten()
         else {
             return;
         };
-        if let Some(card) = element.get_attribute("data-card") {
+        if let Some(bay) = element
+            .get_attribute("data-card")
+            .and_then(|card| card.parse::<usize>().ok())
+        {
+            if kind == "click" && bay <= model::CARTRIDGE_BAYS {
+                self.state.modal = Some(bay);
+            }
+        } else if let Some(bank) = element.get_attribute("data-bank") {
             if kind == "click" {
-                self.state.modal = Some(card);
+                self.state.bank = Some(bank);
             }
         } else if let Some(tab) = element.get_attribute("data-tab") {
             if kind == "click" {
@@ -523,7 +548,9 @@ impl App {
             }
         } else if let Some(grant) = element.get_attribute("data-grant") {
             if kind == "click" && self.state.busy.is_empty() {
-                self.install_grant(&grant);
+                if let Some(bay) = bay_number(&element) {
+                    self.install_grant(bay, &grant, None);
+                }
             }
         } else if let Some(action) = element.get_attribute("data-action") {
             let fire = if action == "name" {
@@ -760,6 +787,19 @@ fn listen_escape(app: &Shared) -> Result<(), JsValue> {
     Ok(())
 }
 
+/// The bay a control belongs to, from the element or its nearest parent
+/// that names one.
+fn bay_number(element: &Element) -> Option<usize> {
+    element
+        .closest("[data-bay]")
+        .ok()
+        .flatten()?
+        .get_attribute("data-bay")?
+        .parse()
+        .ok()
+        .filter(|bay| *bay < model::CARTRIDGE_BAYS)
+}
+
 /// Pointer drags on the knobs: press, turn, release.
 fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
     let root = app
@@ -946,29 +986,25 @@ pub fn start() -> Result<(), JsValue> {
         .and_then(|body| body.get_attribute("data-surface"))
         .unwrap_or_else(|| "play".to_owned());
     let storage = window.local_storage().ok().flatten();
-    let installed_grant = storage
+    let bay_names = storage
         .as_ref()
-        .and_then(|storage| storage.get_item(INSTALLED_GRANT_KEY).ok().flatten());
+        .and_then(|storage| storage.get_item(BAY_NAMES_KEY).ok().flatten())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .map(|value| State::bay_names_from_json(&value))
+        .unwrap_or_default();
     let clipboard = storage
         .as_ref()
         .and_then(|storage| storage.get_item(CLIPBOARD_KEY).ok().flatten())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .and_then(|value| Clipboard::from_json(&value));
-    let catalogs = storage
-        .as_ref()
-        .and_then(|storage| storage.get_item(CATALOGS_KEY).ok().flatten())
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .map(|value| State::catalogs_from_json(&value))
-        .unwrap_or_default();
     let app: Shared = Rc::new(RefCell::new(App {
         window,
         document,
         origin,
         state: State {
             surface,
-            installed_grant,
+            bay_names,
             clipboard,
-            catalogs,
             ..State::default()
         },
         client: Client::default(),
@@ -978,6 +1014,7 @@ pub fn start() -> Result<(), JsValue> {
         drag: None,
         envelope: None,
         installing: None,
+        choosing: None,
     }));
     for kind in ["input", "change", "click"] {
         listen(&app, kind)?;
@@ -1039,12 +1076,8 @@ impl App {
         match message["kind"].as_str() {
             Some("context") => {
                 let was_connected = self.state.connected;
-                let catalogs = self.state.catalogs.clone();
                 if self.state.apply_context(message, PLUGIN_ID) {
                     self.state.status.clear();
-                    if self.state.catalogs != catalogs {
-                        self.remember_catalogs();
-                    }
                     if !was_connected {
                         // A fresh host: nothing in flight is known to have
                         // landed, and the controls are fetched at once.
@@ -1094,13 +1127,7 @@ impl App {
             }
         } else if key == "resources" {
             if ok {
-                // The status can be what files the voices playing, so the
-                // store follows it as it follows a context.
-                let catalogs = self.state.catalogs.clone();
                 self.state.apply_resources(result);
-                if self.state.catalogs != catalogs {
-                    self.remember_catalogs();
-                }
             }
         } else if key == "bindings" {
             if ok {
@@ -1108,12 +1135,14 @@ impl App {
             }
         } else if key == "choose" {
             self.state.busy.clear();
-            match result["grant_id"].as_str() {
+            let bay = self.choosing.take();
+            match (result["grant_id"].as_str(), bay) {
                 // The host answers a cancelled explorer with a status rather
                 // than a grant, and that is not a failure.
-                Some(grant) if ok => {
+                (Some(grant), Some(bay)) if ok => {
                     let grant = grant.to_owned();
-                    self.install_grant(&grant);
+                    let name = result["display_name"].as_str().map(str::to_owned);
+                    self.install_grant(bay, &grant, name.as_deref());
                 }
                 _ if ok => self.state.notice = "No cartridge was chosen.".into(),
                 _ => self.state.notice = error.to_owned(),
@@ -1123,17 +1152,17 @@ impl App {
             let installing = self.installing.take();
             self.state.notice = if ok {
                 self.last_poll = f64::NEG_INFINITY;
-                // The host has just said so; its next context — which can
-                // arrive before the resource status is asked again — files
-                // the voices under the right cartridge.
-                self.state
-                    .set_resource_installed(render::CARTRIDGE, key == "install");
+                if let Some((bay, name)) = installing {
+                    // The host has just said so; the next context brings the
+                    // programs, and the name is what the bay is labelled by.
+                    self.state
+                        .set_resource_installed(model::BAY_RESOURCES[bay], key == "install");
+                    self.remember_bay(bay, (key == "install").then_some(name));
+                }
                 if key == "install" {
-                    self.remember_installed(installing);
-                    "Cartridge installed. Its voices are the programs now.".into()
+                    "Cartridge in. Its voices are programs now.".into()
                 } else {
-                    self.remember_installed(None);
-                    "Cartridge removed. RF-7 is playing its factory bank.".into()
+                    "Cartridge out.".into()
                 }
             } else {
                 error.to_owned()
