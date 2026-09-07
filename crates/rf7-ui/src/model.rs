@@ -252,7 +252,21 @@ pub struct State {
     pub installed_grant: Option<String>,
     /// The operator copied last, if any.
     pub clipboard: Option<Clipboard>,
+    /// The voices of every cartridge SETUP has seen play, by the grant that
+    /// installed it — and under [`FACTORY`] the factory bank's. The host
+    /// only ever tells the surface what is playing now; this is how a
+    /// cartridge on the shelf can show its label before it is put back in.
+    pub catalogs: BTreeMap<String, Vec<String>>,
+    /// The cartridge whose voices are open on the setup surface, if any:
+    /// a grant id, [`FACTORY`] or [`SAVED`].
+    pub modal: Option<String>,
 }
+
+/// The catalog key of the factory bank.
+pub const FACTORY: &str = "factory";
+/// The catalog key of the saved programs, which are not a cartridge the
+/// host installs but are shown as one.
+pub const SAVED: &str = "saved";
 
 impl State {
     /// Read a `context` message. Returns false if it is not for this plugin.
@@ -298,7 +312,85 @@ impl State {
         self.pending_fields.retain(|_, (_, answered)| !*answered);
         self.pending_parameters
             .retain(|_, (_, answered)| !*answered);
+        self.remember_catalog();
         true
+    }
+
+    /// The library voices playing now — the programs that are not saved
+    /// ones — in catalog order.
+    pub fn library_names(&self) -> Vec<String> {
+        self.instance.as_ref().map_or_else(Vec::new, |instance| {
+            instance
+                .sounds
+                .iter()
+                .filter(|sound| sound.id.starts_with("program-"))
+                .map(|sound| sound.name.clone())
+                .collect()
+        })
+    }
+
+    /// The saved programs, in catalog order.
+    pub fn saved_names(&self) -> Vec<String> {
+        self.instance.as_ref().map_or_else(Vec::new, |instance| {
+            instance
+                .sounds
+                .iter()
+                .filter(|sound| sound.id.starts_with("custom."))
+                .map(|sound| sound.name.clone())
+                .collect()
+        })
+    }
+
+    /// File the voices playing now under the cartridge they came from: the
+    /// grant SETUP installed last while a cartridge is in, the factory bank
+    /// otherwise. Only the setup surface keeps this; the host names no
+    /// grant to the play surface.
+    fn remember_catalog(&mut self) {
+        if self.surface != "config" || self.instance.is_none() {
+            return;
+        }
+        let names = self.library_names();
+        if names.is_empty() {
+            return;
+        }
+        let key = if self.resource_installed("cartridge") {
+            match &self.installed_grant {
+                Some(grant) => grant.clone(),
+                None => return,
+            }
+        } else {
+            FACTORY.to_owned()
+        };
+        self.catalogs.insert(key, names);
+    }
+
+    /// The remembered catalogs as one JSON object, for the browser's store.
+    pub fn catalogs_json(&self) -> Value {
+        Value::Object(
+            self.catalogs
+                .iter()
+                .map(|(key, names)| (key.clone(), json!(names)))
+                .collect(),
+        )
+    }
+
+    pub fn catalogs_from_json(value: &Value) -> BTreeMap<String, Vec<String>> {
+        value
+            .as_object()
+            .map(|object| {
+                object
+                    .iter()
+                    .filter_map(|(key, names)| {
+                        let names: Vec<String> = names
+                            .as_array()?
+                            .iter()
+                            .filter_map(|name| name.as_str().map(str::to_owned))
+                            .collect();
+                        (!names.is_empty()).then(|| (key.clone(), names))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn apply_parameters(&mut self, result: &Value) -> bool {
@@ -416,6 +508,19 @@ impl State {
             .iter()
             .find(|p| p.index == index)
             .map(|p| p.value)
+    }
+
+    /// What the host has just said about one resource, ahead of its next
+    /// status report.
+    pub fn set_resource_installed(&mut self, id: &str, installed: bool) {
+        match self
+            .resources
+            .iter_mut()
+            .find(|(resource, _)| resource == id)
+        {
+            Some(entry) => entry.1 = installed,
+            None => self.resources.push((id.to_owned(), installed)),
+        }
     }
 
     /// Whether a file is installed in one of the plugin's resources.
@@ -828,6 +933,44 @@ pub(crate) mod tests {
         state.pending_fields.get_mut("feedback").unwrap().1 = true;
         state.apply_context(&context(), "org.rackforge.rf7");
         assert_eq!(state.field_value("feedback"), Some(FieldValue::Integer(6)));
+    }
+
+    #[test]
+    fn the_setup_surface_files_the_voices_under_the_cartridge_playing_them() {
+        let mut state = State {
+            surface: "config".into(),
+            ..State::default()
+        };
+        let context = |names: &[&str]| {
+            json!({
+                "instance": {
+                    "plugin_id": "org.rackforge.rf7",
+                    "sounds": names.iter().enumerate().map(|(index, name)| json!({
+                        "id": format!("program-{:03}", index + 1), "name": name, "bank": "bank-1", "editable": true
+                    })).collect::<Vec<_>>()
+                }
+            })
+        };
+        assert!(state.apply_context(&context(&["RF TINES", "RF SUB"]), "org.rackforge.rf7"));
+        assert_eq!(state.catalogs.get(FACTORY).map(Vec::len), Some(2));
+        // The host confirmed an install; its status has not been asked yet.
+        state.installed_grant = Some("g1".into());
+        state.set_resource_installed("cartridge", true);
+        assert!(state.apply_context(&context(&["BRASS 1"]), "org.rackforge.rf7"));
+        assert_eq!(state.catalogs.get("g1"), Some(&vec!["BRASS 1".to_owned()]));
+        assert_eq!(
+            state.catalogs.get(FACTORY).map(Vec::len),
+            Some(2),
+            "untouched"
+        );
+        // The play surface keeps nothing; a grant no context named is not
+        // invented; the store round-trips.
+        state.surface = "play".into();
+        assert!(state.apply_context(&context(&["OTHER"]), "org.rackforge.rf7"));
+        assert_eq!(state.catalogs.len(), 2);
+        let json = state.catalogs_json();
+        assert_eq!(State::catalogs_from_json(&json), state.catalogs);
+        assert!(State::catalogs_from_json(&json!({"g9": [], "g8": "x"})).is_empty());
     }
 
     #[test]

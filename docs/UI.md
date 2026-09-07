@@ -145,12 +145,24 @@ working surface scrolls, and the rail and the section keys do not.
 RF-7 declares a second surface, CONFIG, which RackForge opens from its
 Plugins section. It holds what is done once rather than while playing:
 
-- **Voice cartridge** — whether the instrument is playing its factory bank or
-  a cartridge of yours, how many programs that gives it, and the two commands
-  that change it. *Install…* opens the host's own explorer, and the file it
-  returns is installed at once; *Remove* puts the factory bank back.
-- **Already chosen** — the files RackForge has been granted before, each one
-  a press away from being installed again without the explorer.
+- **Voice cartridge** — the cartridge in the slot, drawn as one: the factory
+  bank or a file of yours, its source and how many programs it gives the
+  instrument, and the two commands that change it. *Install…* opens the
+  host's own explorer, and the file it returns is installed at once; *Remove*
+  puts the factory bank back.
+- **On the shelf** — every cartridge the surface knows, as the DX7's own
+  looked: a dark slab with a turquoise *VOICE ROM* band along the spine and a
+  label on its face — a number, a hairline, and rows A and B naming the
+  first and last voice of each bank of thirty-two. The factory bank comes
+  first, then every file RackForge has been granted before, then your saved
+  programs as a silver *DATA RAM*. The one playing is lit. Pressing a
+  cartridge opens its voices, numbered in the two columns its label would
+  print them, with *Put it in* for a file that is not in the slot, *Play the
+  factory bank* for the factory, and *In the slot* for the one playing.
+  A file's voices are read the first time it plays: the host tells the
+  surface only what is playing now, so the surface keeps each cartridge's
+  catalog itself, in the browser's storage, and a file not yet put in says
+  *Install to read* until it is.
 - **Instrument** — the plugin version, how many programs you have saved, and
   whether the host is answering.
 

@@ -19,6 +19,8 @@ const INSTALLED_GRANT_KEY: &str = "rf7.cartridge.grant";
 /// Where the browser keeps the operator copied last, so it can be pasted
 /// into another program, or after the surface has been closed and opened.
 const CLIPBOARD_KEY: &str = "rf7.operator.clipboard";
+/// Where the browser keeps the voices of every cartridge SETUP has seen.
+const CATALOGS_KEY: &str = "rf7.cartridge.catalogs";
 const POLL_MS: f64 = 3000.0;
 /// How far a pointer travels for a knob's whole range, in pixels. The other
 /// RackForge instruments use the same throw.
@@ -384,8 +386,12 @@ impl App {
             ("clear-cartridge", _) => {
                 self.state.busy = "Removing the cartridge...".into();
                 self.state.notice.clear();
+                self.state.modal = None;
                 self.client.queue(client::clear_resource(render::CARTRIDGE));
             }
+            ("close-modal", _) => self.state.modal = None,
+            // A press inside the dialog stays inside it.
+            ("modal", _) => {}
             _ => {}
         }
     }
@@ -405,6 +411,7 @@ impl App {
     fn install_grant(&mut self, grant: &str) {
         self.state.busy = "Installing the cartridge...".into();
         self.state.notice.clear();
+        self.state.modal = None;
         self.installing = Some(grant.to_owned());
         self.client
             .queue(client::install_resource(render::CARTRIDGE, grant));
@@ -423,6 +430,14 @@ impl App {
         self.state.clipboard = clipboard;
     }
 
+    /// Keep the cartridges' voices across sessions of the surface, once a
+    /// context has added to them.
+    fn remember_catalogs(&mut self) {
+        if let Ok(Some(storage)) = self.window.local_storage() {
+            let _ = storage.set_item(CATALOGS_KEY, &self.state.catalogs_json().to_string());
+        }
+    }
+
     /// Remember which grant is installed, across sessions of the surface.
     fn remember_installed(&mut self, grant: Option<String>) {
         self.state.installed_grant = grant.clone();
@@ -439,13 +454,17 @@ impl App {
             return;
         };
         let Some(element) = target
-            .closest("[data-field],[data-param],[data-sound],[data-action],[data-tab],[data-grant]")
+            .closest("[data-field],[data-param],[data-sound],[data-action],[data-tab],[data-grant],[data-card]")
             .ok()
             .flatten()
         else {
             return;
         };
-        if let Some(tab) = element.get_attribute("data-tab") {
+        if let Some(card) = element.get_attribute("data-card") {
+            if kind == "click" {
+                self.state.modal = Some(card);
+            }
+        } else if let Some(tab) = element.get_attribute("data-tab") {
             if kind == "click" {
                 self.state.page = tab;
             }
@@ -723,6 +742,24 @@ fn listen(app: &Shared, kind: &'static str) -> Result<(), JsValue> {
     Ok(())
 }
 
+/// Escape closes a cartridge's voices.
+fn listen_escape(app: &Shared) -> Result<(), JsValue> {
+    let document = app.borrow().document.clone();
+    let shared = app.clone();
+    let callback =
+        Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |event: web_sys::KeyboardEvent| {
+            if event.key() == "Escape" {
+                let mut app = shared.borrow_mut();
+                if app.state.modal.take().is_some() {
+                    app.render();
+                }
+            }
+        });
+    document.add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref())?;
+    callback.forget();
+    Ok(())
+}
+
 /// Pointer drags on the knobs: press, turn, release.
 fn listen_knobs(app: &Shared) -> Result<(), JsValue> {
     let root = app
@@ -917,6 +954,12 @@ pub fn start() -> Result<(), JsValue> {
         .and_then(|storage| storage.get_item(CLIPBOARD_KEY).ok().flatten())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .and_then(|value| Clipboard::from_json(&value));
+    let catalogs = storage
+        .as_ref()
+        .and_then(|storage| storage.get_item(CATALOGS_KEY).ok().flatten())
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .map(|value| State::catalogs_from_json(&value))
+        .unwrap_or_default();
     let app: Shared = Rc::new(RefCell::new(App {
         window,
         document,
@@ -925,6 +968,7 @@ pub fn start() -> Result<(), JsValue> {
             surface,
             installed_grant,
             clipboard,
+            catalogs,
             ..State::default()
         },
         client: Client::default(),
@@ -938,6 +982,7 @@ pub fn start() -> Result<(), JsValue> {
     for kind in ["input", "change", "click"] {
         listen(&app, kind)?;
     }
+    listen_escape(&app)?;
     listen_knobs(&app)?;
     let messages = app.clone();
     let callback = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
@@ -994,8 +1039,12 @@ impl App {
         match message["kind"].as_str() {
             Some("context") => {
                 let was_connected = self.state.connected;
+                let catalogs = self.state.catalogs.clone();
                 if self.state.apply_context(message, PLUGIN_ID) {
                     self.state.status.clear();
+                    if self.state.catalogs != catalogs {
+                        self.remember_catalogs();
+                    }
                     if !was_connected {
                         // A fresh host: nothing in flight is known to have
                         // landed, and the controls are fetched at once.
@@ -1068,6 +1117,11 @@ impl App {
             let installing = self.installing.take();
             self.state.notice = if ok {
                 self.last_poll = f64::NEG_INFINITY;
+                // The host has just said so; its next context — which can
+                // arrive before the resource status is asked again — files
+                // the voices under the right cartridge.
+                self.state
+                    .set_resource_installed(render::CARTRIDGE, key == "install");
                 if key == "install" {
                     self.remember_installed(installing);
                     "Cartridge installed. Its voices are the programs now.".into()

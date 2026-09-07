@@ -14,6 +14,7 @@
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
+mod cartridge;
 pub mod client;
 pub mod diagram;
 pub mod model;

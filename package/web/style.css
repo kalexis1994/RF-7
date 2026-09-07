@@ -1294,3 +1294,127 @@ h1, h2, h3, p { margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ---- the cartridge shelf ----------------------------------------------- */
+
+/* The slot: the cartridge that is playing beside the facts and the keys. */
+.page-config .slot {
+  display: grid;
+  grid-template-columns: minmax(120px, 150px) minmax(0, 1fr);
+  gap: 6px 16px;
+  align-items: center;
+}
+
+.page-config .slot .facts { grid-template-columns: auto minmax(0, 1fr); }
+
+.cart {
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+  transition: transform 140ms ease, filter 140ms ease;
+}
+
+.cart svg { display: block; width: 100%; height: auto; }
+.cart:hover:not(:disabled) { transform: translateY(-3px); filter: brightness(1.12); }
+.cart:disabled { cursor: default; opacity: 0.6; }
+.cart[aria-pressed="true"] svg { filter: drop-shadow(0 0 10px rgba(86, 183, 230, 0.5)); }
+
+.shelf {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(128px, 100%), 1fr));
+  gap: 12px 14px;
+}
+
+/* A cartridge's voices, over the panel. */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(4, 5, 7, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.modal-card {
+  width: min(720px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #0a0b0e;
+  border-radius: 6px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.06)),
+    var(--panel-raised);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.modal-cart svg { display: block; width: 100%; height: auto; }
+.modal-body { min-width: 0; display: grid; align-content: start; gap: 8px; }
+
+.modal-body h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: var(--ivory);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-body h4 {
+  margin: 6px 0 0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+
+.modal-body h4 .letter {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border: 1px solid var(--muted);
+  border-radius: 2px;
+  line-height: 11px;
+  text-align: center;
+}
+
+.modal-facts { margin: 0; font-size: 9.5px; letter-spacing: 0.12em; color: var(--muted); }
+
+.voices {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  columns: 2;
+  column-gap: 18px;
+}
+
+.voices li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 6px;
+  padding: 2px 0;
+  break-inside: avoid;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+
+.voices .n { color: var(--amber); }
+.voices .name { color: #cec9bd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal-keys { margin-top: 8px; }
+.modal-keys .key.lit { display: inline-flex; align-items: center; gap: 8px; }
+
+@media (max-width: 560px) {
+  .modal-card { grid-template-columns: 1fr; }
+  .modal-cart { width: 160px; margin: 0 auto; }
+}
