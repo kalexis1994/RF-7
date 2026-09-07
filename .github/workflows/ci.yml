@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: kalexis1994/rackforge
-          ref: 2df1164ed034eaf9257c68a9d58cc3060f834b99
+          ref: 719ab9b014bf13a2ac6307f6a4c1c250d37f740e
           path: rackforge
           persist-credentials: false
       - name: Install the pinned Rust toolchain
@@ -71,7 +71,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: kalexis1994/rackforge
-          ref: 2df1164ed034eaf9257c68a9d58cc3060f834b99
+          ref: 719ab9b014bf13a2ac6307f6a4c1c250d37f740e
           path: rackforge
           persist-credentials: false
       - name: Install the pinned Rust toolchain

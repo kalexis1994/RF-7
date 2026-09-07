@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "rackforge-control-profile"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "thiserror",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "rackforge-midi-api"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "thiserror",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "rackforge-plugin-api"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "rackforge-control-profile",
  "rackforge-midi-api",
@@ -123,11 +123,11 @@ dependencies = [
 
 [[package]]
 name = "rackforge-plugin-sdk"
-version = "0.1.15"
+version = "0.1.16"
 
 [[package]]
 name = "rackforge-program-api"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "semver",
  "serde",
