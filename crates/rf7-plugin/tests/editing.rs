@@ -356,8 +356,9 @@ fn every_save_leaves_the_saved_programs_and_the_factory_bank_as_bulk_dumps() {
         "INIT VOICE"
     );
 
-    // A second save keeps the first program in its slot and adds the next;
-    // with a cartridge installed the factory banks are not written.
+    // A second save keeps the first program in its slot and adds the next.
+    // The factory bank is always the head of the library, so its dumps are
+    // written whatever is in the bays.
     let mut bank = Vec::new();
     for _ in 0..VOICES_PER_CARTRIDGE {
         bank.extend_from_slice(&encode_packed(&factory_voice(9)));
@@ -374,7 +375,12 @@ fn every_save_leaves_the_saved_programs_and_the_factory_bank_as_bulk_dumps() {
         .collect();
     assert_eq!(
         paths,
-        ["programs/user-rf7-002.syx", "exports/rf7-programs-1.syx"]
+        [
+            "programs/user-rf7-002.syx",
+            "exports/rf7-programs-1.syx",
+            "exports/rf7-factory-1.syx",
+            "exports/rf7-factory-2.syx"
+        ]
     );
     let programs = decode_library(&saved.artifacts[1].bytes).unwrap();
     assert_eq!(
@@ -411,7 +417,8 @@ fn saved_programs_survive_a_new_cartridge_a_reload_and_a_session() {
     assert!(processor.load_preset("custom.user.rf7-001"));
     let before = peak(&render(&mut processor, 20));
 
-    // A cartridge replaces the library and leaves the saved program playing.
+    // A cartridge joins the library behind the factory bank, and leaves the
+    // saved program playing.
     let mut bank = Vec::new();
     for _ in 0..VOICES_PER_CARTRIDGE {
         bank.extend_from_slice(&encode_packed(&factory_voice(9)));
@@ -423,7 +430,7 @@ fn saved_programs_survive_a_new_cartridge_a_reload_and_a_session() {
     assert!((peak(&render(&mut processor, 20)) - before).abs() < 1e-6);
     assert_eq!(
         catalog(&mut processor).presets.len(),
-        VOICES_PER_CARTRIDGE + 1
+        rf7_voice::FACTORY_VOICES + VOICES_PER_CARTRIDGE + 1
     );
 
     // The session remembers the selection; a fresh instance gets the saved

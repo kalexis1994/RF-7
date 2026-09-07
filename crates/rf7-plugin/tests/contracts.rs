@@ -52,6 +52,13 @@ fn catalog(processor: &mut Rf7Processor) -> String {
 }
 
 const FRAMES: u32 = 128;
+/// The library begins with the factory bank, which never leaves, so a
+/// cartridge's first voice is the program after it.
+const FIRST_CARTRIDGE_PROGRAM: usize = FACTORY_VOICES + 1;
+
+fn program(number: usize) -> String {
+    format!("program-{number:03}")
+}
 
 fn prepared() -> Rf7Processor {
     let mut processor = Rf7Processor::default();
@@ -362,11 +369,12 @@ fn only_this_plugins_program_identifiers_are_accepted() {
     assert!(!processor.load_preset("voice-001"));
     assert!(!processor.load_preset(""));
 
-    // A cartridge makes the further slots real.
+    // A cartridge makes the further slots real, behind the factory bank.
     assert!(deliver(&mut processor, &raw_bank(b"LOADED    ")));
-    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
-    assert!(processor.load_preset("program-032"));
-    assert!(!processor.load_preset("program-033"));
+    let last = FACTORY_VOICES + VOICES_PER_CARTRIDGE;
+    assert_eq!(processor.program_count(), last);
+    assert!(processor.load_preset(&program(last)));
+    assert!(!processor.load_preset(&program(last + 1)));
 }
 
 #[test]
@@ -396,8 +404,12 @@ fn a_cartridge_arrives_in_pieces_and_becomes_the_programs() {
     assert!(deliver(&mut processor, &dump));
     let json = catalog(&mut processor);
     assert!(json.contains("USER TONE"), "{json}");
-    assert!(!json.contains("RF TINES"));
-    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
+    // The factory bank is still in front of it, as it always is.
+    assert!(json.contains("RF TINES"));
+    assert_eq!(
+        processor.program_count(),
+        FACTORY_VOICES + VOICES_PER_CARTRIDGE
+    );
     assert!(processor.load_preset("program-001"));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
@@ -408,9 +420,12 @@ fn a_chip_image_with_no_framing_at_all_is_read() {
     // no checksum, nothing but packed voices.
     let mut processor = prepared();
     assert!(deliver(&mut processor, &raw_bank(b"FROM A ROM")));
-    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
+    assert_eq!(
+        processor.program_count(),
+        FACTORY_VOICES + VOICES_PER_CARTRIDGE
+    );
     assert!(catalog(&mut processor).contains("FROM A ROM"));
-    assert!(processor.load_preset("program-020"));
+    assert!(processor.load_preset(&program(FIRST_CARTRIDGE_PROGRAM + 19)));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
 
@@ -420,12 +435,13 @@ fn two_banks_become_sixty_four_programs() {
     bytes.extend_from_slice(&raw_bank(b"BANK TWO  "));
     let mut processor = prepared();
     assert!(deliver(&mut processor, &bytes));
-    assert_eq!(processor.program_count(), 64);
+    assert_eq!(processor.program_count(), FACTORY_VOICES + 64);
     let json = catalog(&mut processor);
     assert!(json.contains("BANK ONE"));
     assert!(json.contains("BANK TWO"));
-    assert!(json.contains("\"id\":\"program-064\""));
-    assert!(processor.load_preset("program-064"));
+    let last = program(FACTORY_VOICES + 64);
+    assert!(json.contains(&format!("\"id\":\"{last}\"")));
+    assert!(processor.load_preset(&last));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
 
@@ -486,10 +502,10 @@ fn a_zip_of_banks_installs_as_the_banks_inside_it() {
     assert!(deliver(&mut processor, &archive));
     // The two dumps, in the order their names sort in, and nothing from the
     // copy of bank one that sits beside them under another extension.
-    assert_eq!(processor.program_count(), 64);
+    assert_eq!(processor.program_count(), FACTORY_VOICES + 64);
     let json = catalog(&mut processor);
     assert!(json.contains("BANK ONE") && json.contains("BANK TWO"));
-    assert!(processor.load_preset("program-001"));
+    assert!(processor.load_preset(&program(FIRST_CARTRIDGE_PROGRAM)));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 
     // An archive with no cartridge in it changes nothing.
@@ -511,22 +527,32 @@ fn the_bays_play_in_order_and_do_not_disturb_each_other() {
         CARTRIDGE_RESOURCES[2],
         &raw_bank(b"THIRD BAY ")
     ));
-    assert_eq!(processor.program_count(), VOICES_PER_CARTRIDGE);
+    assert_eq!(
+        processor.program_count(),
+        FACTORY_VOICES + VOICES_PER_CARTRIDGE
+    );
     assert_eq!(processor.bays()[2], VOICES_PER_CARTRIDGE);
     let json = catalog(&mut processor);
     assert!(json.contains("\"id\":\"bank-3\",\"name\":\"Cartridge 3\""));
-    assert!(!json.contains("bank-factory"), "a bay is filled");
+    assert!(json.contains("bank-factory"), "the factory bank stays");
 
-    // One in bay one goes in front of it, without moving what bay three holds.
+    // One in bay one goes in front of bay three, and behind the factory
+    // bank, which nothing goes in front of.
     assert!(deliver_to(
         &mut processor,
         CARTRIDGE_RESOURCES[0],
         &raw_bank(b"FIRST BAY ")
     ));
-    assert_eq!(processor.program_count(), 2 * VOICES_PER_CARTRIDGE);
+    assert_eq!(
+        processor.program_count(),
+        FACTORY_VOICES + 2 * VOICES_PER_CARTRIDGE
+    );
     let json = catalog(&mut processor);
-    assert!(json.contains("\"id\":\"program-001\",\"name\":\"FIRST BAY\""));
-    assert!(json.contains("\"id\":\"program-033\",\"name\":\"THIRD BAY\""));
+    assert!(json.contains("\"id\":\"program-001\",\"name\":\"RF TINES\""));
+    let first = program(FIRST_CARTRIDGE_PROGRAM);
+    assert!(json.contains(&format!("\"id\":\"{first}\",\"name\":\"FIRST BAY\"")));
+    let third = program(FIRST_CARTRIDGE_PROGRAM + VOICES_PER_CARTRIDGE);
+    assert!(json.contains(&format!("\"id\":\"{third}\",\"name\":\"THIRD BAY\"")));
 
     // Replacing bay one with a longer cartridge pushes bay three along.
     let mut two_banks = raw_bank(b"WIDER ONE ");
@@ -536,13 +562,17 @@ fn the_bays_play_in_order_and_do_not_disturb_each_other() {
         CARTRIDGE_RESOURCES[0],
         &two_banks
     ));
-    assert_eq!(processor.program_count(), 3 * VOICES_PER_CARTRIDGE);
+    assert_eq!(
+        processor.program_count(),
+        FACTORY_VOICES + 3 * VOICES_PER_CARTRIDGE
+    );
     let json = catalog(&mut processor);
-    assert!(json.contains("\"id\":\"program-065\",\"name\":\"THIRD BAY\""));
-    assert!(processor.load_preset("program-065"));
+    let third = program(FIRST_CARTRIDGE_PROGRAM + 2 * VOICES_PER_CARTRIDGE);
+    assert!(json.contains(&format!("\"id\":\"{third}\",\"name\":\"THIRD BAY\"")));
+    assert!(processor.load_preset(&third));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 
-    // Eight bays fill the library, and a ninth resource is not ours.
+    // Eight bays behind the factory bank, and a ninth resource is not ours.
     let mut processor = prepared();
     for resource in CARTRIDGE_RESOURCES {
         assert!(deliver_to(
@@ -551,7 +581,11 @@ fn the_bays_play_in_order_and_do_not_disturb_each_other() {
             &raw_bank(b"EVERY BAY ")
         ));
     }
-    assert_eq!(processor.program_count(), MAX_VOICES);
+    assert_eq!(
+        processor.program_count(),
+        FACTORY_VOICES + CARTRIDGE_RESOURCES.len() * VOICES_PER_CARTRIDGE
+    );
+    assert!(processor.program_count() <= MAX_VOICES);
     assert!(!processor.begin_resource("cartridge-9", 16));
 }
 
@@ -574,11 +608,14 @@ fn a_single_voice_dump_is_a_library_of_one() {
     voice.operators[0].output_level = 99;
     let mut processor = prepared();
     assert!(deliver(&mut processor, &encode_voice_dump(&voice, 0)));
-    assert_eq!(processor.program_count(), 1);
+    assert_eq!(processor.program_count(), FACTORY_VOICES + 1);
     let json = catalog(&mut processor);
     assert_eq!(json.matches("ONE VOICE").count(), 1);
-    assert!(!json.contains("program-002"), "one voice is one program");
-    assert!(processor.load_preset("program-001"));
+    assert!(
+        !json.contains(&program(FIRST_CARTRIDGE_PROGRAM + 1)),
+        "one voice is one program"
+    );
+    assert!(processor.load_preset(&program(FIRST_CARTRIDGE_PROGRAM)));
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
 

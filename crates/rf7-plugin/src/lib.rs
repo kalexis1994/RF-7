@@ -27,7 +27,9 @@ use rackforge_plugin_sdk::{
     export_parallel_processor,
 };
 use rf7_dsp::{DISPATCH_STRIDE, Engine, MAX_BLOCK_FRAMES, POLYPHONY, SHARED_CAPACITY, Unit};
-use rf7_voice::{Library, MAX_VOICES, SCRATCH_BYTES, Voice, decode_cartridge, factory_library};
+use rf7_voice::{
+    FACTORY_VOICES, Library, MAX_VOICES, SCRATCH_BYTES, Voice, decode_cartridge, factory_library,
+};
 use serde::Serialize;
 
 pub const MAX_FRAMES: u32 = 4096;
@@ -129,6 +131,12 @@ impl Rf7Processor {
         catalog::write(&self.library, &self.bay_length, &self.custom, destination)
     }
 
+    /// How many voices at the head of the library are the factory's. They
+    /// are always there, whatever is in the bays.
+    pub const fn factory_voices() -> usize {
+        FACTORY_VOICES
+    }
+
     /// How many voices each bay contributed, in bay order.
     pub fn bays(&self) -> &[usize; CARTRIDGE_BAYS] {
         &self.bay_length
@@ -136,29 +144,22 @@ impl Rf7Processor {
 
     /// Put a cartridge in a bay, or take the one there out.
     ///
-    /// A bay's voices are one stretch of the library, so this replaces that
-    /// stretch and leaves every other bay where it was — which is what keeps
-    /// a program number pointing at the same program when another bay
-    /// changes. With every bay empty the factory bank plays again.
+    /// The library begins with the factory bank and never stops: a cartridge
+    /// is added to the instrument, not put in front of it, which is what the
+    /// internal memory of the instrument this one is shaped after did. Each
+    /// bay's voices are one stretch behind it, so filling, replacing or
+    /// emptying a bay leaves every other bay's program numbers — and the
+    /// factory's — exactly where they were.
     fn install_bay(&mut self, bay: usize, cartridge: &Library) {
         if bay >= CARTRIDGE_BAYS {
             return;
         }
-        if self.bay_length.iter().all(|length| *length == 0) {
-            // The factory bank is standing in; the first cartridge is not
-            // spliced into it, it replaces it.
-            self.library = Library::from_voices(&[]);
-        }
-        let at: usize = self.bay_length[..bay].iter().sum();
+        let at = FACTORY_VOICES + self.bay_length[..bay].iter().sum::<usize>();
         let remove = self.bay_length[bay];
         self.bay_length[bay] = self.library.splice(at, remove, cartridge);
         self.bay_found[bay] = cartridge.found();
-        if self.bay_length.iter().all(|length| *length == 0) {
-            self.library = factory_library();
-            self.bay_found = [0; CARTRIDGE_BAYS];
-        } else {
-            self.library.set_found(self.bay_found.iter().sum());
-        }
+        self.library
+            .set_found(FACTORY_VOICES + self.bay_found.iter().sum::<usize>());
         self.adopt();
     }
 
@@ -381,15 +382,10 @@ impl Rf7Processor {
             None => saved.push(*voice),
         }
         let mut artifacts = document::export_artifacts("rf7-programs", &saved);
-        let factory = self.library.len() == rf7_voice::FACTORY_VOICES
-            && (0..rf7_voice::FACTORY_VOICES)
-                .all(|i| self.library.voice(i) == Some(&rf7_voice::factory_voice(i)));
-        if factory {
-            let voices: Vec<Voice> = (0..rf7_voice::FACTORY_VOICES)
-                .map(rf7_voice::factory_voice)
-                .collect();
-            artifacts.extend(document::export_artifacts("rf7-factory", &voices));
-        }
+        // The factory bank is always the head of the library, so it is
+        // always worth writing out beside the programs.
+        let voices: Vec<Voice> = (0..FACTORY_VOICES).map(rf7_voice::factory_voice).collect();
+        artifacts.extend(document::export_artifacts("rf7-factory", &voices));
         artifacts
     }
 }

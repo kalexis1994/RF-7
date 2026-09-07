@@ -4,7 +4,8 @@
 
 - Eight cartridges at once, and a library page to find them in. RF-7 held
   one cartridge; it now declares eight bays, and what plays is all of them in
-  order — up to two hundred and fifty-six programs. A bay's voices are one
+  order, behind the factory bank, which never leaves — up to three hundred and
+  twenty programs. A bay's voices are one
   stretch of the library, so filling, replacing or emptying one leaves every
   other bay's program numbers where they were, and the plugin publishes one
   bank per bay so the programs themselves say which cartridge they came from.

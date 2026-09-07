@@ -19,9 +19,10 @@ use crate::{
     sysex::{BULK_DUMP_LENGTH, SysexError, VOICE_DUMP_LENGTH, VOICES_PER_CARTRIDGE},
 };
 
-/// As many voices as RF-7 will offer as programs at once: eight cartridges
-/// of thirty-two, which is what its eight bays hold.
-pub const MAX_VOICES: usize = 256;
+/// As many voices as RF-7 will offer as programs at once: the factory bank
+/// and eight cartridges of thirty-two, which is a full rack, with room to
+/// spare for cartridges that hold two banks each.
+pub const MAX_VOICES: usize = 320;
 /// One bank of thirty-two packed voices, as a chip holds them.
 pub const RAW_BANK_LENGTH: usize = VOICES_PER_CARTRIDGE * PACKED_VOICE_LENGTH;
 

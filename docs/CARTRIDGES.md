@@ -59,10 +59,10 @@ not depend on what it was handed. Encryption, the extensions for very large
 files, and compression methods other than *stored* and *deflate* are refused
 rather than guessed at.
 
-RF-7 holds **eight cartridges at once**, in eight bays, and offers up to **256
-programs** — every bay in order, then the programs you saved. A file holding
-more than fits is read and capped, and the laboratory reports how many the file
-actually contained.
+RF-7 holds **eight cartridges at once**, in eight bays, and offers up to **320
+programs** — the factory bank, then every bay in order, then the programs you
+saved. A file holding more than fits is read and capped, and the laboratory
+reports how many the file actually contained.
 
 ## Which bank comes first
 
@@ -111,10 +111,13 @@ from, and the surface draws the label from them. The one thing it does keep is
 the file's name, because the host never tells a plugin what a file was
 called.
 
-A bay's voices sit in one stretch of the library, so filling, replacing or
-emptying one leaves every other bay exactly where it was. Program numbers run
-straight through the rack: bay one's voices are programs 1 upwards, and the
-next filled bay carries on from there.
+**The factory bank never leaves.** It is the head of the library — programs 1
+upwards, in a bank of its own at the top of the list — and a cartridge is
+added to the instrument rather than put in front of it, which is what the
+internal memory of the instrument this one is shaped after did. Each bay's
+voices are one stretch behind it, so filling, replacing or emptying a bay
+leaves the factory's program numbers, and every other bay's, exactly where
+they were.
 
 Going the other way — RF-7's programs, or its factory bank, as a cartridge —
 happens with every save: the host writes `exports/rf7-programs-N.syx` and,
@@ -136,10 +139,9 @@ the permission and the copy are all the host's: RF-7 is handed the bytes and
 never sees a path, and the surface asks for the file by the resource's name
 rather than by any location of its own.
 
-Once a cartridge is delivered, RF-7 publishes its voices as the plugin's
-programs, `program-001` upwards, named as the cartridge names them and grouped
-into one bank per bay. With every bay empty the thirty-eight factory voices
-stand in, in a bank of their own.
+RF-7 publishes the factory voices as `program-001` upwards, in the bank named
+*Factory bank*, and a bay's cartridge behind them, named as the cartridge
+names them, in a bank per bay.
 
 ## Bytes that are out of range
 

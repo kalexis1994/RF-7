@@ -142,10 +142,10 @@ working surface scrolls, and the rail and the section keys do not.
 
 ## The library
 
-**PROGRAMS** is two columns. Down the left is every bank there is, one per
-filled bay and named after its cartridge, then the programs you saved; the
-list scrolls on its own, and the bank the program that is playing came out of
-is marked. Down the right are that bank's programs, numbered from one as the
+**PROGRAMS** is two columns. Down the left is every bank there is: the factory
+bank at the top, always, then one per filled bay named after its cartridge,
+then the programs you saved. The list scrolls on its own, and the bank the
+program that is playing came out of is marked. Down the right are that bank's programs, numbered from one as the
 cartridge numbers them. Choosing a bank on the left changes what is on the
 right and nothing else — the instrument keeps playing what it was playing.
 

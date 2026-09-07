@@ -12,7 +12,7 @@
 
 use crate::CARTRIDGE_BAYS;
 use crate::programs::{CustomPrograms, PREFIX as CUSTOM_PREFIX};
-use rf7_voice::{Library, MAX_VOICES, printable_name};
+use rf7_voice::{FACTORY_VOICES, Library, MAX_VOICES, printable_name};
 
 const PREFIX: &str = "program-";
 const BANK_PREFIX: &str = "bank-";
@@ -31,10 +31,13 @@ pub fn program_index(id: &str) -> Option<usize> {
     (1..=MAX_VOICES).contains(&number).then(|| number - 1)
 }
 
-/// The bank a program belongs to: the bay whose stretch of the library it
-/// falls in, or none at all when the factory bank is what is playing.
+/// The bank a program belongs to: the factory's, at the head of the library,
+/// or the bay whose stretch of it the program falls in.
 fn bank_of(slot: usize, bays: &[usize]) -> Option<usize> {
-    let mut first = 0;
+    let mut first = FACTORY_VOICES;
+    if slot < first {
+        return None;
+    }
     for (bay, length) in bays.iter().enumerate() {
         if slot < first + length {
             return Some(bay);
@@ -46,9 +49,9 @@ fn bank_of(slot: usize, bays: &[usize]) -> Option<usize> {
 
 /// Write the whole catalog, or write nothing and return `None`.
 ///
-/// A bank is a bay: the programs a bay's cartridge put in the library, under
-/// that bay's name, which is what lets the surfaces show a rack rather than
-/// one long list. With every bay empty there is one bank, the factory one.
+/// The first bank is the factory's, which is always there. After it comes a
+/// bank per filled bay, under that bay's name, which is what lets the
+/// surfaces show a rack rather than one long list.
 pub fn write(
     library: &Library,
     bays: &[usize],
@@ -60,35 +63,26 @@ pub fn write(
         written: 0,
         overflowed: false,
     };
-    out.text("{\"schema_version\":1,\"banks\":[");
-    if bays.iter().all(|length| *length == 0) {
-        out.text("{\"id\":\"");
-        out.text(FACTORY_BANK);
-        out.text("\",\"name\":\"Factory bank\",\"order\":0}");
-    } else {
-        let mut written_banks = 0;
-        for (bay, length) in bays.iter().enumerate() {
-            if *length == 0 {
-                continue;
-            }
-            if written_banks > 0 {
-                out.text(",");
-            }
-            out.text("{\"id\":\"");
-            out.bank_id(bay);
-            out.text("\",\"name\":\"Cartridge ");
-            out.number(bay + 1);
-            out.text("\",\"order\":");
-            out.number(bay);
-            out.text("}");
-            written_banks += 1;
+    out.text("{\"schema_version\":1,\"banks\":[{\"id\":\"");
+    out.text(FACTORY_BANK);
+    out.text("\",\"name\":\"Factory bank\",\"order\":0}");
+    for (bay, length) in bays.iter().enumerate() {
+        if *length == 0 {
+            continue;
         }
+        out.text(",{\"id\":\"");
+        out.bank_id(bay);
+        out.text("\",\"name\":\"Cartridge ");
+        out.number(bay + 1);
+        out.text("\",\"order\":");
+        out.number(bay + 1);
+        out.text("}");
     }
     if !custom.is_empty() {
         out.text(",{\"id\":\"");
         out.text(USER_BANK);
         out.text("\",\"name\":\"Your programs\",\"order\":");
-        out.number(CARTRIDGE_BAYS);
+        out.number(CARTRIDGE_BAYS + 1);
         out.text("}");
     }
     out.text("],\"presets\":[");
@@ -290,18 +284,20 @@ mod tests {
     }
 
     #[test]
-    fn a_bank_is_a_bay_and_every_program_says_which_one_it_is_in() {
-        // Two bays filled out of eight, the second one skipped.
-        let voices: Vec<Voice> = (0..40).map(|n| factory_voice(n % FACTORY_VOICES)).collect();
+    fn a_bank_is_a_bay_behind_the_factory_bank_that_is_always_there() {
+        // The factory bank, then two bays filled out of eight.
+        let voices: Vec<Voice> = (0..FACTORY_VOICES + 40)
+            .map(|n| factory_voice(n % FACTORY_VOICES))
+            .collect();
         let library = Library::from_voices(&voices);
         let mut bays = NO_BAYS;
         bays[0] = 32;
         bays[2] = 8;
         let json = rendered_in(&library, &bays, &CustomPrograms::default());
-        assert!(json.contains("{\"id\":\"bank-1\",\"name\":\"Cartridge 1\",\"order\":0}"));
-        assert!(json.contains("{\"id\":\"bank-3\",\"name\":\"Cartridge 3\",\"order\":2}"));
+        assert!(json.contains("{\"id\":\"bank-factory\",\"name\":\"Factory bank\",\"order\":0}"));
+        assert!(json.contains("{\"id\":\"bank-1\",\"name\":\"Cartridge 1\",\"order\":1}"));
+        assert!(json.contains("{\"id\":\"bank-3\",\"name\":\"Cartridge 3\",\"order\":3}"));
         assert!(!json.contains("bank-2"), "an empty bay is not a bank");
-        assert!(!json.contains(FACTORY_BANK), "a rack has no factory bank");
         // The last program of bay one, and the first of bay three.
         let bank_of = |program: &str| {
             let at = json.find(&format!("\"id\":\"{program}\"")).expect(program);
@@ -309,9 +305,23 @@ mod tests {
             let at = entry.find("\"bank\":\"").expect("a bank") + 8;
             entry[at..].split('"').next().expect("a name").to_owned()
         };
-        assert_eq!(bank_of("program-032"), "bank-1");
-        assert_eq!(bank_of("program-033"), "bank-3");
-        assert_eq!(bank_of("program-040"), "bank-3");
+        // The factory's last program, then bay one's, then bay three's.
+        assert_eq!(
+            bank_of(&format!("program-{:03}", FACTORY_VOICES)),
+            "bank-factory"
+        );
+        assert_eq!(
+            bank_of(&format!("program-{:03}", FACTORY_VOICES + 1)),
+            "bank-1"
+        );
+        assert_eq!(
+            bank_of(&format!("program-{:03}", FACTORY_VOICES + 32)),
+            "bank-1"
+        );
+        assert_eq!(
+            bank_of(&format!("program-{:03}", FACTORY_VOICES + 33)),
+            "bank-3"
+        );
 
         // With every bay empty there is one bank, and it is the factory's.
         let json = rendered(&factory_library());
@@ -357,9 +367,9 @@ mod tests {
     fn only_our_own_identifiers_select_a_program() {
         assert_eq!(program_index("program-001"), Some(0));
         assert_eq!(program_index("program-032"), Some(31));
-        assert_eq!(program_index("program-256"), Some(255));
+        assert_eq!(program_index("program-320"), Some(319));
         assert_eq!(program_index("program-000"), None);
-        assert_eq!(program_index("program-257"), None);
+        assert_eq!(program_index("program-321"), None);
         assert_eq!(program_index("program-01"), None, "the old two-digit form");
         assert_eq!(program_index("program-0001"), None);
         assert_eq!(program_index("program-00x"), None);
