@@ -346,7 +346,10 @@ impl State {
     /// otherwise. Only the setup surface keeps this; the host names no
     /// grant to the play surface.
     fn remember_catalog(&mut self) {
-        if self.surface != "config" || self.instance.is_none() {
+        // Until the host has said what is installed, the voices playing
+        // cannot be filed: a cartridge may be in, under a grant remembered
+        // from the last session, and the factory bank must not take them.
+        if self.surface != "config" || self.instance.is_none() || self.resources.is_empty() {
             return;
         }
         let names = self.library_names();
@@ -544,6 +547,7 @@ impl State {
                 ))
             })
             .collect();
+        self.remember_catalog();
         true
     }
 
@@ -939,6 +943,7 @@ pub(crate) mod tests {
     fn the_setup_surface_files_the_voices_under_the_cartridge_playing_them() {
         let mut state = State {
             surface: "config".into(),
+            resources: vec![("cartridge".into(), false)],
             ..State::default()
         };
         let context = |names: &[&str]| {
@@ -953,6 +958,17 @@ pub(crate) mod tests {
         };
         assert!(state.apply_context(&context(&["RF TINES", "RF SUB"]), "org.rackforge.rf7"));
         assert_eq!(state.catalogs.get(FACTORY).map(Vec::len), Some(2));
+        // A surface that opens onto a playing cartridge, before the host has
+        // said so, files nothing until it does.
+        let mut fresh = State {
+            surface: "config".into(),
+            installed_grant: Some("g1".into()),
+            ..State::default()
+        };
+        assert!(fresh.apply_context(&context(&["BRASS 1"]), "org.rackforge.rf7"));
+        assert!(fresh.catalogs.is_empty());
+        assert!(fresh.apply_resources(&json!([{"resource_id": "cartridge", "installed": true}])));
+        assert_eq!(fresh.catalogs.get("g1"), Some(&vec!["BRASS 1".to_owned()]));
         // The host confirmed an install; its status has not been asked yet.
         state.installed_grant = Some("g1".into());
         state.set_resource_installed("cartridge", true);
