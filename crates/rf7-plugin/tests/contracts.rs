@@ -425,6 +425,75 @@ fn two_banks_become_sixty_four_programs() {
     assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
 }
 
+/// A cartridge as it is published: a ZIP holding the two banks and the same
+/// voices again under the other formats' names.
+#[test]
+fn a_zip_of_banks_installs_as_the_banks_inside_it() {
+    /// One entry, kept as it is, and the directory record that finds it.
+    fn add(archive: &mut Vec<u8>, directory: &mut Vec<u8>, name: &str, data: &[u8]) {
+        let offset = archive.len() as u32;
+        let (name, length) = (name.as_bytes(), data.len() as u32);
+        let crc = rf7_voice::zip::crc32(data);
+        archive.extend_from_slice(b"PK");
+        archive.extend_from_slice(&20_u16.to_le_bytes());
+        archive.extend_from_slice(&[0; 8]);
+        archive.extend_from_slice(&crc.to_le_bytes());
+        archive.extend_from_slice(&length.to_le_bytes());
+        archive.extend_from_slice(&length.to_le_bytes());
+        archive.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        archive.extend_from_slice(&0_u16.to_le_bytes());
+        archive.extend_from_slice(name);
+        archive.extend_from_slice(data);
+
+        directory.extend_from_slice(b"PK");
+        directory.extend_from_slice(&20_u16.to_le_bytes());
+        directory.extend_from_slice(&20_u16.to_le_bytes());
+        directory.extend_from_slice(&[0; 8]);
+        directory.extend_from_slice(&crc.to_le_bytes());
+        directory.extend_from_slice(&length.to_le_bytes());
+        directory.extend_from_slice(&length.to_le_bytes());
+        directory.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        directory.extend_from_slice(&[0; 12]);
+        directory.extend_from_slice(&offset.to_le_bytes());
+        directory.extend_from_slice(name);
+    }
+
+    let (mut archive, mut directory) = (Vec::new(), Vec::new());
+    let entries: [(&str, Vec<u8>); 4] = [
+        ("ROM1/ROM1B.syx", raw_bank(b"BANK TWO  ")),
+        ("ROM1/ROM1A.syx", raw_bank(b"BANK ONE  ")),
+        ("ROM1/ROM1A.mid", raw_bank(b"BANK ONE  ")),
+        ("ROM1/readme.txt", b"the master group".to_vec()),
+    ];
+    for (name, data) in &entries {
+        add(&mut archive, &mut directory, name, data);
+    }
+    let (offset, size) = (archive.len() as u32, directory.len() as u32);
+    archive.extend_from_slice(&directory);
+    archive.extend_from_slice(b"PK");
+    archive.extend_from_slice(&0_u32.to_le_bytes());
+    archive.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    archive.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    archive.extend_from_slice(&size.to_le_bytes());
+    archive.extend_from_slice(&offset.to_le_bytes());
+    archive.extend_from_slice(&0_u16.to_le_bytes());
+
+    let mut processor = prepared();
+    assert!(deliver(&mut processor, &archive));
+    // The two dumps, in the order their names sort in, and nothing from the
+    // copy of bank one that sits beside them under another extension.
+    assert_eq!(processor.program_count(), 64);
+    let json = catalog(&mut processor);
+    assert!(json.contains("BANK ONE") && json.contains("BANK TWO"));
+    assert!(processor.load_preset("program-001"));
+    assert!(peak(&render(&mut processor, &[note_on(0, 60, 100)], 20)) > 0.0);
+
+    // An archive with no cartridge in it changes nothing.
+    let mut processor = prepared();
+    assert!(!deliver(&mut processor, b"PK                "));
+    assert_eq!(processor.program_count(), FACTORY_VOICES);
+}
+
 #[test]
 fn a_library_larger_than_rf7_offers_is_capped_rather_than_refused() {
     let mut bytes = Vec::new();

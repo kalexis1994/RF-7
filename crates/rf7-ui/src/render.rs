@@ -498,8 +498,9 @@ pub fn page(state: &State) -> String {
 /// What RF-7 reads, and the one resource it declares.
 pub const CARTRIDGE: &str = "cartridge";
 /// The extensions the host's explorer offers first. A chip image has no
-/// framing and often no extension of its own, so `bin` is here too.
-pub const CARTRIDGE_EXTENSIONS: [&str; 3] = ["syx", "bin", "dx7"];
+/// framing and often no extension of its own, so `bin` is here too, and a
+/// collection is published as a ZIP of the lot.
+pub const CARTRIDGE_EXTENSIONS: [&str; 4] = ["syx", "bin", "dx7", "zip"];
 
 /// The setup surface: what the instrument is playing from, and how to change
 /// it. Everything here is the host's — RF-7 never sees a path.
@@ -554,7 +555,7 @@ fn page_config(state: &State) -> String {
     );
     // One line, because the buttons say the rest.
     cartridge.push_str(
-        "<p class=\"small\">Bulk dumps, single voices or a raw chip image. Up to 128.</p>",
+        "<p class=\"small\">Bulk dumps, single voices, a raw chip image, or a ZIP of them. Up to 128 voices.</p>",
     );
 
     let mut out = String::from("<div class=\"page page-config\">");

@@ -148,8 +148,9 @@ Plugins section. It holds what is done once rather than while playing:
 - **Voice cartridge** — the cartridge in the slot, drawn as one: the factory
   bank or a file of yours, its source and how many programs it gives the
   instrument, and the two commands that change it. *Install…* opens the
-  host's own explorer, and the file it returns is installed at once; *Remove*
-  puts the factory bank back.
+  host's own explorer, and the file it returns is installed at once — a dump,
+  a chip image, or the ZIP a collection was published in, read as the banks
+  inside it; *Remove* puts the factory bank back.
 - **On the shelf** — every cartridge the surface knows, as the DX7's own
   looked: a dark slab with a turquoise *VOICE ROM* band along the spine and a
   label on its face — a number, a hairline, and rows A and B naming the

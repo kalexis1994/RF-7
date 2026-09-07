@@ -95,13 +95,24 @@ impl Library {
         }
     }
 
-    fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             voices: [Voice::init(); MAX_VOICES],
             corrections: [0; MAX_VOICES],
             length: 0,
             found: 0,
         }
+    }
+
+    /// Take on another library's voices, keeping this one's cap and counting
+    /// everything the other one found. What an archive is read into.
+    pub(crate) fn absorb(&mut self, other: &Library) {
+        for (index, voice) in other.voices().iter().enumerate() {
+            self.push(*voice, other.corrections[index]);
+        }
+        // The voices the other library could not keep are still voices that
+        // were there, and `found` is what says so.
+        self.found += other.found - other.length;
     }
 }
 

@@ -27,7 +27,7 @@ use rackforge_plugin_sdk::{
     export_parallel_processor,
 };
 use rf7_dsp::{DISPATCH_STRIDE, Engine, MAX_BLOCK_FRAMES, POLYPHONY, SHARED_CAPACITY, Unit};
-use rf7_voice::{Library, MAX_VOICES, Voice, decode_library, factory_library};
+use rf7_voice::{Library, MAX_VOICES, SCRATCH_BYTES, Voice, decode_cartridge, factory_library};
 use serde::Serialize;
 
 pub const MAX_FRAMES: u32 = 4096;
@@ -39,7 +39,7 @@ pub const TRANSFER_BYTES: usize = 65_536;
 /// The largest library file RF-7 will take from the host. Four cartridges of
 /// bulk dumps is already past [`MAX_VOICES`]; the rest is slack so an oversized
 /// collection is read and capped rather than refused for its size alone.
-pub const MAX_RESOURCE_BYTES: usize = 65_536;
+pub const MAX_RESOURCE_BYTES: usize = 8 * 1_048_576;
 /// Version 3 adds the saved program the user had selected, and is written only
 /// when one is. Version 2 carries every parameter; version 1, which carried
 /// only the gain and the program, is still accepted so a session saved by
@@ -409,9 +409,12 @@ impl ParallelProcessor for Rf7Processor {
             return false;
         }
         self.receiving = false;
-        // Bulk dumps, a single voice, or a headerless chip image: whichever
-        // shape the user installed, the programs come out the same way.
-        let Ok(library) = decode_library(&self.incoming) else {
+        // Bulk dumps, a single voice, a headerless chip image, or a ZIP of
+        // any of those: whichever shape the user installed, the programs
+        // come out the same way. The scratch an archive is unpacked through
+        // is taken here, on the control thread, and given back at once.
+        let mut scratch = vec![0; SCRATCH_BYTES];
+        let Ok(library) = decode_cartridge(&self.incoming, &mut scratch) else {
             self.incoming = Vec::new();
             return false;
         };

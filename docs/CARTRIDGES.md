@@ -15,6 +15,7 @@ What RF-7 does instead is read a cartridge you already have.
 | Cartridge bulk dumps | any multiple of 4104 | 32 packed voices each |
 | Single voice dump | 163 | one unpacked voice |
 | Chip image | any multiple of 4096 | 32 packed voices per bank, no framing |
+| ZIP | up to eight megabytes | any number of the above |
 
 The first two are ordinary DX7 System Exclusive files, usually named `.syx`.
 The sub-status channel a dump was made on is ignored: RF-7 reads files, not a
@@ -29,6 +30,34 @@ the right length, and every byte seven-bit — and the corrections count below i
 then the only quality signal there is.
 
 A single voice is a library of one, not one voice repeated thirty-two times.
+
+## Archives
+
+Cartridges are published as ZIPs, and what is in one is rarely only the
+cartridge: the same bank appears as a `.syx`, as a `.mid` wrapping the same
+dump, and in the formats two old editors used, all four in a folder, sometimes
+with a note beside them. A reader that went by content would find every bank
+three times over, so RF-7 goes by name.
+
+It takes the `.syx` files if the archive holds any, the `.bin` and `.dx7` chip
+images if it does not, and anything at all if it holds neither — so a cartridge
+saved under a name nobody agreed on still installs. Whatever it takes it reads
+in the order the names sort in, which is what puts `ROM1A` in front of `ROM1B`,
+and it skips a second copy of a file it has already taken. An entry that turns
+out not to be a cartridge is passed over rather than failing the archive.
+
+The reading is RF-7's own, in
+[`crates/rf7-voice/src/zip.rs`](../crates/rf7-voice/src/zip.rs) and
+[`inflate.rs`](../crates/rf7-voice/src/inflate.rs) — this crate has no
+dependencies, and a decompressor that runs on a user's files is not a place to
+add one. Every entry's checksum is verified before its bytes are used, and
+each is decompressed into a buffer of RF-7's own — half a megabyte, which is
+a hundred and twenty eight banks in one file, and past which a file is passed
+over rather than read in half. Four megabytes decompressed is all one archive
+gets, however large it is or claims to be, so what an installation costs does
+not depend on what it was handed. Encryption, the extensions for very large
+files, and compression methods other than *stored* and *deflate* are refused
+rather than guessed at.
 
 RF-7 offers up to **128 programs**. A file holding more is read and capped, and
 the laboratory reports how many the file actually contained.
@@ -66,8 +95,9 @@ boundaries, and says how many bytes were out of range.
 
 RF-7's **SETUP** surface installs one. Open the plugin from RackForge's
 Plugins section and press *Install…*: the host opens its own file explorer,
-copies what you choose, prepares a replacement instance away from the audio
-callback and swaps it at a block boundary. *Remove* puts the factory bank
+copies what you choose — a dump, a chip image or the ZIP a collection came
+in — prepares a replacement instance away from the audio callback and swaps it
+at a block boundary. *Remove* puts the factory bank
 back. Files the host has been pointed at before are listed under *Already
 chosen*, so the same cartridge goes back in without the explorer. The host
 reports only that a cartridge is installed, so the surface remembers which of

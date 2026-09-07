@@ -11,7 +11,7 @@ mod web_ui;
 
 use rf7_dsp::{Engine, POLYPHONY, SAMPLE_RATE_MAX, SAMPLE_RATE_MIN};
 use rf7_voice::{
-    Library, MAX_VOICES, RAW_BANK_LENGTH, VOICES_PER_CARTRIDGE, decode_library, printable_name,
+    Library, MAX_VOICES, RAW_BANK_LENGTH, VOICES_PER_CARTRIDGE, decode_cartridge, printable_name,
 };
 use serde_json::json;
 use std::{
@@ -27,7 +27,7 @@ Usage:
   rf7-lab demo --output PATH.wav [--cartridge PATH.syx]
   rf7-lab stress [--sample-rate HZ]
   rf7-lab inspect PATH.wav
-  rf7-lab cartridge PATH.syx
+  rf7-lab cartridge PATH   a dump, a chip image, or a ZIP of them
   rf7-lab report [--cartridge PATH] [--bank-order X]   operators, levels, indexes
   rf7-lab brightness --program N [--against PATH --against-program N]
   rf7-lab package
@@ -41,7 +41,8 @@ Render options:
   --seconds S       Duration 0.05..60 (default 4)
   --hold S          Key hold, shorter than the duration (default 2)
   --cartridge PATH  A cartridge file: System Exclusive dumps, a single voice,
-                    or a headerless chip image of one or more 4096-byte banks
+                    a headerless chip image of one or more 4096-byte banks, or
+                    a ZIP holding any number of those
   --bank-order X    file (default) or swapped. A cartridge ROM holds bank B in
                     the lower half of its address space, so a chip image opens
                     with the voices the front panel numbers B1..B32; swapped
@@ -260,7 +261,9 @@ pub fn read_library(path: &Path, swap: bool) -> Result<Library, Box<dyn Error>> 
     } else {
         bytes
     };
-    decode_library(&bytes).map_err(|error| format!("{}: {error}", path.display()).into())
+    let mut scratch = vec![0; rf7_voice::SCRATCH_BYTES];
+    decode_cartridge(&bytes, &mut scratch)
+        .map_err(|error| format!("{}: {error}", path.display()).into())
 }
 
 /// The same bytes with their 4096-byte banks in the opposite order.

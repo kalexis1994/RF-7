@@ -9,14 +9,18 @@
 //! RF-7; a user's own cartridges arrive at runtime as resource bytes.
 #![no_std]
 
+mod archive;
 mod calibration;
 mod factory;
+pub mod inflate;
 mod library;
 mod packed;
 mod parameters;
 mod sysex;
 mod unpacked;
+pub mod zip;
 
+pub use archive::{CartridgeError, SCRATCH_BYTES, decode_cartridge};
 pub use calibration::{
     calibration_cartridge, calibration_levels, calibration_library, calibration_voice,
 };

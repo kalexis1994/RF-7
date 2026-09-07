@@ -2,6 +2,21 @@
 
 ## 0.5.0 — done
 
+- Cartridges install from the ZIP they were published in. A collection is
+  a folder of the same bank four times over — the dump, a MIDI file carrying
+  it, and two editors' own formats — so a reader going by content would find
+  every bank three times. RF-7 goes by name: the dumps if there are any, the
+  chip images if not, anything at all if neither, in the order the names sort
+  in, skipping a second copy of a file already taken and passing over an entry
+  that turns out not to be a cartridge. The container and its decompressor are
+  written out in the voice crate, which has no dependencies and no allocator:
+  DEFLATE decompresses into a buffer the caller owns, every entry's checksum
+  is verified before its bytes are used, and encryption, the large-file
+  extensions and the other compression methods are refused. RackForge's own
+  ZIP importer could not do this — it hands each entry to a different declared
+  resource and refuses two that match the same one — so the plugin reads the
+  archive itself, which is where the knowledge of what a cartridge looks like
+  already is.
 - Sixteen voices across the host's audio workers. RF-7 declares
   RackForge's `parallel_render_v1`: the engine is the coordinator of its
   own block — the MIDI, the controls, the LFO, the allocation of voices
@@ -353,11 +368,5 @@
 
 ## Then
 
-- A ZIP import container, so a folder of `.syx` files can be installed in one
-  step instead of one cartridge at a time. RackForge's importer hands each
-  entry to one declared resource, authenticated by content with its name
-  ignored, and refuses two entries for the same one; with a single
-  `cartridge` resource that is one file per ZIP, which is no better than the
-  file itself. It waits on a host contract for a bank of cartridge slots.
 - A voice name field in the editor, when the host's generic editor grows a
   text kind; today the name is the program's name in the host.
