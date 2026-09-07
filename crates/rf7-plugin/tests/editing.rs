@@ -2,12 +2,15 @@
 //! reading everything the plugin emits.
 
 use rackforge_plugin_api::PresetCatalog;
-use rackforge_plugin_sdk::{MidiEvent, Processor};
+use rackforge_plugin_sdk::{MidiEvent, ParallelProcessor};
 use rackforge_program_api::{
     PreparedProgram, ProgramDocument, ProgramEditRequest, ProgramEditorFieldKind,
     ProgramEditorPage, ProgramEditorValue, ProgramEditorView, ProgramFieldEditRequest,
 };
-use rf7_plugin::{RESOURCE_CARTRIDGE, Rf7Processor, TRANSFER_BYTES};
+mod common;
+/// The plugin driven the way a host drives it, over buffers of its own.
+use common::Host as Rf7Processor;
+use rf7_plugin::{RESOURCE_CARTRIDGE, TRANSFER_BYTES};
 use rf7_voice::{
     VOICES_PER_CARTRIDGE, decode_library, decode_voice_dump, encode_packed, factory_voice,
 };

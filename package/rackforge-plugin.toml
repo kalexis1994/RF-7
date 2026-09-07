@@ -3,11 +3,13 @@ id = "org.rackforge.rf7"
 name = "RF-7"
 short_name = "RF-7"
 vendor = "RackForge"
-version = "0.4.0"
+version = "0.5.0"
 description = "Six-operator FM instrument: the 32 algorithms, the four-segment envelopes, the cartridges you already own, and a voice editor in every surface"
 kind = "instrument"
 state_version = 2
-capabilities = ["audio_output", "midi_input", "presets", "state"]
+# Sixteen voices the host may render on any of its threads: RF-7 is the
+# coordinator of its own block, and each voice a unit that never sees it.
+capabilities = ["audio_output", "midi_input", "presets", "state", "parallel_render_v1"]
 ui_layouts = ["little@1"]
 # The cartridge is installed on its own surface: it is setup, done once, and
 # not something to reach for while playing.
@@ -15,7 +17,7 @@ config_mode = true
 
 [api]
 major = 1
-minor = 11
+minor = 12
 
 # Host-rendered identity: the icon on cards, the banner in the PLAY selector,
 # the splash while loading. Display-only PNGs; the host validates them.

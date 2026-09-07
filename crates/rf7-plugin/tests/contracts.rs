@@ -1,12 +1,15 @@
 //! What the host is allowed to do to this plugin, and what it gets back.
 
 use rackforge_plugin_sdk::{
-    MIDI2_FLAG_ORIGIN_7BIT, MIDI2_KIND_CONTROL_CHANGE, MidiEvent, MidiEvent2, ParameterEvent,
-    Processor,
+    MIDI2_FLAG_ORIGIN_7BIT, MIDI2_KIND_CONTROL_CHANGE, MidiEvent, MidiEvent2, ParallelProcessor,
+    ParameterEvent,
 };
+mod common;
+/// The plugin driven the way a host drives it, over buffers of its own.
+use common::Host as Rf7Processor;
 use rf7_plugin::{
     MAX_FRAMES, MAX_RESOURCE_BYTES, PARAMETER_COUNT, PARAMETER_GAIN, RESOURCE_CARTRIDGE,
-    Rf7Processor, TRANSFER_BYTES, parameters,
+    TRANSFER_BYTES, parameters,
 };
 use rf7_voice::{
     Cartridge, FACTORY_VOICES, MAX_VOICES, VOICES_PER_CARTRIDGE, Voice, encode_bulk_dump,

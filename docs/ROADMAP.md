@@ -1,7 +1,25 @@
 # Roadmap
 
-## 0.4.0 — done
+## 0.5.0 — done
 
+- Sixteen voices across the host's audio workers. RF-7 declares
+  RackForge's `parallel_render_v1`: the engine is the coordinator of its
+  own block — the MIDI, the controls, the LFO, the allocation of voices
+  and, once per frame, the performance every voice reads — and each voice
+  is a unit that never sees the engine, rendering from two byte payloads:
+  the block-shared one, with the frame-by-frame pitch, amplitude dip and
+  bias, and its own, with the commands it was given at their frames — start
+  this key with this patch, move to this note, release, stop. The host may
+  run the sixteen on any of its threads, in any order; the sum is taken in
+  slot order, so the audio is the same on one core or four. The engine
+  learns that a note has ended from the unit's audio, once it has been
+  exactly zero for a twenty-fourth of a second, and the sequential path the
+  laboratory and the tests use runs the same three stages on units of its
+  own. Wide MIDI and the program editor still reach the plugin: the host's
+  contract grew to carry both into a parallel component (RackForge's
+  `rackforge_parallel_begin_block_v2`, API 1.12). The packaged plugin
+  needs RackForge 0.1.17 or later; on the desktop the pool reports the
+  voices spread over its workers with no deadline missed.
 - The operator kernel as the OPS chip computes it. RF-7 had multiplied an
   interpolated sine by a gain; the chip adds the envelope's attenuation to a
   logarithmic sine — a quarter wave of 1024 entries in 1/1024 of an octave,
@@ -12,6 +30,9 @@
   every six decibels, and the hard floor sixteen octaves down are in the
   sound. Every voice still measures within its tolerance of its reference,
   and the sixteen-voice load moved by seven per cent.
+
+## 0.4.0 — done
+
 - Portamento and a mono voice mode, both from the instrument's own
   behaviour. Mono has last-note priority and holds one voice, so a line
   never stacks the release tails of the notes it has left behind; a legato
@@ -333,8 +354,10 @@
 ## Then
 
 - A ZIP import container, so a folder of `.syx` files can be installed in one
-  step instead of one cartridge at a time.
-- `parallel_render_v1`: sixteen voices split cleanly across audio workers, and
-  this instrument is exactly the shape that contract was written for.
+  step instead of one cartridge at a time. RackForge's importer hands each
+  entry to one declared resource, authenticated by content with its name
+  ignored, and refuses two entries for the same one; with a single
+  `cartridge` resource that is one file per ZIP, which is no better than the
+  file itself. It waits on a host contract for a bank of cartridge slots.
 - A voice name field in the editor, when the host's generic editor grows a
   text kind; today the name is the program's name in the host.

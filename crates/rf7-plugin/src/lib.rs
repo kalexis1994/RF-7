@@ -19,13 +19,14 @@ use document::{
 };
 use programs::{CustomProgram, CustomPrograms};
 use rackforge_plugin_sdk::{
-    MIDI_FAMILY_BEND, MIDI_FAMILY_CONTROL, MIDI_FAMILY_NOTE, MIDI_FAMILY_PRESSURE,
+    BlockContext, MIDI_FAMILY_BEND, MIDI_FAMILY_CONTROL, MIDI_FAMILY_NOTE, MIDI_FAMILY_PRESSURE,
     MIDI_FAMILY_PROGRAM, MIDI2_FLAG_ORIGIN_7BIT, MIDI2_KIND_CHANNEL_PRESSURE,
     MIDI2_KIND_CONTROL_CHANGE, MIDI2_KIND_NOTE_OFF, MIDI2_KIND_NOTE_ON, MIDI2_KIND_PITCH_BEND,
     MIDI2_KIND_PROGRAM_CHANGE, MidiEvent, MidiEvent2, PROGRAM_EDIT_BASIC, PROGRAM_EDIT_DECLARATIVE,
-    PROGRAM_EDIT_PREVIEW, ParameterEvent, Processor, export_processor,
+    PROGRAM_EDIT_PREVIEW, ParallelProcessor, PlanWriter, UnitContext, UnitMix,
+    export_parallel_processor,
 };
-use rf7_dsp::Engine;
+use rf7_dsp::{DISPATCH_STRIDE, Engine, MAX_BLOCK_FRAMES, POLYPHONY, SHARED_CAPACITY, Unit};
 use rf7_voice::{Library, MAX_VOICES, Voice, decode_library, factory_library};
 use serde::Serialize;
 
@@ -72,6 +73,9 @@ pub struct Rf7Processor {
     receiving: bool,
     maximum_frames: u32,
     channels: u32,
+    /// Whether the block being rendered passed the pre-stage's checks; a
+    /// block that did not is silence, whatever the units did.
+    block_valid: bool,
 }
 
 impl Default for Rf7Processor {
@@ -87,6 +91,7 @@ impl Default for Rf7Processor {
             receiving: false,
             maximum_frames: 0,
             channels: 0,
+            block_valid: false,
         }
     }
 }
@@ -337,7 +342,9 @@ fn emit<T: Serialize>(value: &T, destination: &mut [u8]) -> Option<usize> {
     Some(bytes.len())
 }
 
-impl Processor for Rf7Processor {
+impl ParallelProcessor for Rf7Processor {
+    type Unit = Unit;
+
     fn prepare(&mut self, rate: f64, frames: u32, inputs: u32, outputs: u32) -> bool {
         if frames == 0 || frames > MAX_FRAMES || inputs != 0 || !(1..=2).contains(&outputs) {
             return false;
@@ -607,80 +614,128 @@ impl Processor for Rf7Processor {
         }
     }
 
-    fn process(
-        &mut self,
-        input: &[f32],
-        output: &mut [f32],
-        midi: &[MidiEvent],
-        parameters: &[ParameterEvent],
-        frames: u32,
-        inputs: u32,
-        outputs: u32,
-    ) {
-        self.process_wide(
-            input,
-            output,
-            midi,
-            &[],
-            parameters,
-            frames,
-            inputs,
-            outputs,
-        );
-    }
-
-    fn process_wide(
-        &mut self,
-        _input: &[f32],
-        output: &mut [f32],
-        midi: &[MidiEvent],
-        midi2: &[MidiEvent2],
-        parameters: &[ParameterEvent],
-        frames: u32,
-        inputs: u32,
-        outputs: u32,
-    ) {
-        output.fill(0.0);
-        let samples = (frames as usize).checked_mul(outputs as usize);
-        if self.engine.is_none()
-            || frames > self.maximum_frames
-            || inputs != 0
-            || outputs != self.channels
-            || samples.is_none_or(|count| count > output.len())
-            || !ordered(midi.iter().map(|event| event.frame), frames)
-            || !ordered(midi2.iter().map(|event| event.frame), frames)
-            || !ordered(parameters.iter().map(|event| event.frame), frames)
-            || midi.iter().any(|event| !valid_midi1(event))
-            || midi2
+    /// The pre-stage: every event at its frame, the performance of every
+    /// frame into the shared payload, and one dispatch payload per voice
+    /// that has something to do. A block the plugin cannot accept plans
+    /// nothing and is rendered as silence.
+    fn begin_block(&mut self, context: &BlockContext<'_>, plan: &mut PlanWriter<'_>) {
+        let frames = context.frames;
+        self.block_valid = false;
+        let Some(mut engine) = self.engine.take() else {
+            return;
+        };
+        let accepted = frames > 0
+            && frames <= self.maximum_frames
+            && context.input_channels == 0
+            && context.output_channels == self.channels
+            && ordered(context.midi.iter().map(|event| event.frame), frames)
+            && ordered(context.midi2.iter().map(|event| event.frame), frames)
+            && ordered(context.parameters.iter().map(|event| event.frame), frames)
+            && context.midi.iter().all(valid_midi1)
+            && context
+                .midi2
                 .iter()
-                .any(|event| event.channel >= 16 || event.index >= 128)
-            || parameters
+                .all(|event| event.channel < 16 && event.index < 128)
+            && context
+                .parameters
                 .iter()
-                .any(|event| !parameters::is_valid(event.index, event.value))
-        {
+                .all(|event| parameters::is_valid(event.index, event.value))
+            && engine.begin_block(frames);
+        self.engine = Some(engine);
+        if !accepted {
             return;
         }
         let (mut p, mut m, mut w) = (0, 0, 0);
         for frame in 0..frames {
+            self.engine
+                .as_mut()
+                .expect("prepared engine")
+                .set_frame(frame);
             // Explicit stable tie order: parameters, MIDI 1.0, then MIDI 2.0.
-            while p < parameters.len() && parameters[p].frame == frame {
-                self.set_parameter(parameters[p].index, parameters[p].value);
+            while p < context.parameters.len() && context.parameters[p].frame == frame {
+                self.set_parameter(context.parameters[p].index, context.parameters[p].value);
                 p += 1;
             }
-            while m < midi.len() && midi[m].frame == frame {
-                self.midi1(&midi[m]);
+            while m < context.midi.len() && context.midi[m].frame == frame {
+                self.midi1(&context.midi[m]);
                 m += 1;
             }
-            while w < midi2.len() && midi2[w].frame == frame {
-                self.midi2(&midi2[w]);
+            while w < context.midi2.len() && context.midi2[w].frame == frame {
+                self.midi2(&context.midi2[w]);
                 w += 1;
             }
-            let sample = self.engine.as_mut().expect("prepared engine").next_sample();
-            let offset = frame as usize * outputs as usize;
-            for channel in 0..outputs as usize {
-                output[offset + channel] = sample;
+            self.engine
+                .as_mut()
+                .expect("prepared engine")
+                .advance_frame();
+        }
+        let engine = self.engine.as_ref().expect("prepared engine");
+        let shared = engine.shared();
+        let buffer = plan.shared_buffer();
+        if buffer.len() < shared.len() {
+            return;
+        }
+        buffer[..shared.len()].copy_from_slice(shared);
+        if !plan.commit_shared(shared.len()) {
+            return;
+        }
+        let mut payload = [0_u8; DISPATCH_STRIDE];
+        for slot in 0..POLYPHONY {
+            if let Some(length) = engine.dispatch(slot, &mut payload) {
+                plan.activate(slot as u32, &payload[..length]);
             }
         }
+        self.block_valid = true;
+    }
+
+    /// One voice, from its payload and the shared payload alone. The voice
+    /// is mono; every output channel gets the same samples.
+    fn render_unit(
+        _unit_index: u32,
+        unit: &mut Unit,
+        payload: &[u8],
+        context: &UnitContext<'_>,
+        output: &mut [f32],
+    ) {
+        let frames = (context.frames as usize).min(MAX_BLOCK_FRAMES);
+        let channels = context.output_channels as usize;
+        let samples = frames * channels;
+        if channels == 0 || output.len() < samples {
+            output.fill(0.0);
+            return;
+        }
+        let mut mono = [0.0_f32; MAX_BLOCK_FRAMES];
+        if !unit.render(payload, context.shared, &mut mono[..frames]) {
+            output[..samples].fill(0.0);
+            return;
+        }
+        for (frame, sample) in mono[..frames].iter().enumerate() {
+            output[frame * channels..][..channels].fill(*sample);
+        }
+    }
+
+    /// The post-stage: the voices summed in slot order, the output scale,
+    /// and what the engine learns from the audio about which notes ended.
+    fn end_block(
+        &mut self,
+        mix: &UnitMix<'_>,
+        output: &mut [f32],
+        frames: u32,
+        output_channels: u32,
+    ) {
+        let samples = frames as usize * output_channels as usize;
+        let valid = self.block_valid;
+        let Some(engine) = self.engine.as_mut().filter(|_| valid) else {
+            let length = samples.min(output.len());
+            output[..length].fill(0.0);
+            return;
+        };
+        engine.end_block(
+            output_channels as usize,
+            mix.active_units()
+                .map(|unit| (unit as usize, mix.slot(unit))),
+            &mut output[..samples],
+        );
     }
 }
 
@@ -788,9 +843,17 @@ fn read_first_state(state: &[u8]) -> Option<(usize, [f64; PARAMETER_COUNT])> {
     Some((program, values))
 }
 
-export_processor!(Rf7Processor,
-    max_frames = 4096, max_input_channels = 0, max_output_channels = 2,
-    max_midi_events = 256, max_parameter_events = 256, max_transfer_bytes = 65_536,
+export_parallel_processor!(
+    Rf7Processor,
+    max_units = 16,
+    dispatch_stride = 1024,
+    shared_capacity = 49_176,
+    max_frames = 4096,
+    max_input_channels = 0,
+    max_output_channels = 2,
+    max_midi_events = 256,
+    max_parameter_events = 256,
+    max_transfer_bytes = 65_536,
     midi2 = {
         max_events = 256,
         families = MIDI_FAMILY_NOTE
@@ -799,4 +862,12 @@ export_processor!(Rf7Processor,
             | MIDI_FAMILY_BEND
             | MIDI_FAMILY_PRESSURE
     }
+);
+
+// The export's numbers are the engine's, restated where the macro can read them.
+const _: () = assert!(
+    DISPATCH_STRIDE == 1024
+        && SHARED_CAPACITY == 49_176
+        && MAX_BLOCK_FRAMES == 4096
+        && POLYPHONY == 16
 );

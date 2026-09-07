@@ -9,6 +9,7 @@
 //! approximation is recorded per mapping in `docs/MODEL.md`.
 
 mod algorithm;
+pub mod block;
 /// The four-segment envelope, public so a laboratory can plot one without
 /// rendering audio through it.
 pub mod envelope;
@@ -18,11 +19,16 @@ mod tables;
 mod voice;
 
 pub use algorithm::{ALGORITHMS, Algorithm};
+pub use block::{DISPATCH_STRIDE, MAX_BLOCK_FRAMES, SHARED_CAPACITY, Unit};
 pub use envelope::Envelope;
 pub use ops::Ops;
 pub use tables::{LEVEL_FULL, LEVEL_HEADROOM, modulation_index_at_level};
 pub use voice::{Glide, Key, MODULATION_CYCLES, NoteVoice, Performance, VoiceSetup};
 
+use block::{
+    BlockShape, COMMANDS_PER_BLOCK, Command, TimedCommand, shared_length, write_dispatch,
+    write_performance, write_shape,
+};
 use lfo::Lfo;
 use rf7_voice::{Library, Voice, factory_library, printable_name};
 
@@ -294,11 +300,34 @@ impl core::fmt::Display for EngineError {
 
 impl core::error::Error for EngineError {}
 
+/// The engine is the coordinator of RackForge's block contract: it takes
+/// the MIDI and the controls, advances the LFO, decides which voice plays
+/// what, and computes — once per frame — the [`Performance`] every voice
+/// reads. The voices themselves are [`Unit`]s, which the host may render on
+/// any of its threads; the engine reaches them only through the byte
+/// payloads in [`block`], never directly. What it keeps of each voice is a
+/// [`Slot`]: which key it holds, when it started, whether it fell silent.
+///
+/// The sequential path — [`Engine::next_sample`] and [`Engine::render_block`],
+/// which the laboratory and the tests use — runs the same stages on units
+/// the engine owns, so it renders exactly what a scheduling host renders.
 pub struct Engine {
-    voices: [NoteVoice; POLYPHONY],
-    /// A note whose key is up but whose channel still holds the pedal.
-    sustained: [bool; POLYPHONY],
-    ops: Ops,
+    slots: [Slot; POLYPHONY],
+    /// The commands each voice has been given this block, in order.
+    commands: [[TimedCommand; COMMANDS_PER_BLOCK]; POLYPHONY],
+    command_count: [usize; POLYPHONY],
+    /// Commands a voice could not take because its block was full.
+    dropped: u64,
+    /// The frame the next event lands on, and the block's length.
+    frame: u32,
+    block_frames: u32,
+    /// The block-shared payload under construction.
+    shared: Box<[u8]>,
+    /// The output scale per frame: gain, channel volume and expression.
+    scale: Box<[f32]>,
+    /// The units the sequential path renders on, made on first use.
+    units: Option<Box<[Unit; POLYPHONY]>>,
+    unit_output: Option<Box<[f32]>>,
     library: Library,
     program: usize,
     patch: Voice,
@@ -339,9 +368,44 @@ pub struct Engine {
     portamento_switch: bool,
 }
 
+/// What the coordinator knows of one voice. The voice's envelopes live in
+/// its unit; the engine learns that a note has died from the unit's audio,
+/// once it has been exactly zero for [`SILENCE_SECONDS`].
+#[derive(Clone, Copy, Debug, Default)]
+struct Slot {
+    /// A note was started and has not been stopped.
+    started: bool,
+    /// The started note has fallen silent, so the voice is free.
+    silent: bool,
+    held: bool,
+    sustained: bool,
+    channel: u8,
+    note: u8,
+    /// Frames since the note started.
+    age: u64,
+    /// Frames of exact silence in a row, so far.
+    zero_run: u64,
+}
+
+/// How long a voice must be exactly zero before its note counts as over.
+/// A quiet single-carrier tail crosses zero for a few samples at a time;
+/// only the operator kernel's floor keeps a voice at zero for this long.
+const SILENCE_SECONDS: f32 = 1.0 / 24.0;
+
+impl Slot {
+    fn sounding(&self) -> bool {
+        self.started && !self.silent
+    }
+}
+
 /// A mono phrase always sounds on the same voice, so a line never stacks the
 /// release tails of the notes it has left behind.
 const MONO_SLOT: usize = 0;
+
+const IDLE_COMMAND: TimedCommand = TimedCommand {
+    frame: 0,
+    command: Command::Release,
+};
 
 impl Engine {
     pub fn new(sample_rate: f32) -> Result<Self, EngineError> {
@@ -351,9 +415,16 @@ impl Engine {
         let library = factory_library();
         let patch = *library.voice(0).expect("a library is never empty");
         let mut engine = Self {
-            voices: [NoteVoice::default(); POLYPHONY],
-            sustained: [false; POLYPHONY],
-            ops: Ops::new(),
+            slots: [Slot::default(); POLYPHONY],
+            commands: [[IDLE_COMMAND; COMMANDS_PER_BLOCK]; POLYPHONY],
+            command_count: [0; POLYPHONY],
+            dropped: 0,
+            frame: 0,
+            block_frames: 0,
+            shared: vec![0; SHARED_CAPACITY].into_boxed_slice(),
+            scale: vec![0.0; MAX_BLOCK_FRAMES].into_boxed_slice(),
+            units: None,
+            unit_output: None,
             library,
             program: 0,
             patch,
@@ -389,6 +460,13 @@ impl Engine {
     /// busy, since the last [`Engine::reset`]. Reported, not hidden.
     pub fn stolen_notes(&self) -> u64 {
         self.stolen
+    }
+
+    /// Commands a voice could not take because its block was already full:
+    /// more than [`COMMANDS_PER_BLOCK`] things asked of one voice between
+    /// two blocks. Reported, not hidden.
+    pub fn dropped_commands(&self) -> u64 {
+        self.dropped
     }
 
     pub fn set_gain(&mut self, gain: f64) -> bool {
@@ -495,7 +573,7 @@ impl Engine {
             self.note_off(channel, note);
             return;
         }
-        if !self.voices.iter().any(NoteVoice::is_active) {
+        if !self.slots.iter().any(Slot::sounding) {
             // The LFO delay and its phase restart belong to the start of a
             // phrase, not to every key in it.
             self.lfo.key_down();
@@ -510,8 +588,8 @@ impl Engine {
                 // without starting it again: on the instrument a legato note
                 // does not retrigger its envelopes.
                 let legato = self.push_key(note, velocity)
-                    && self.voices[MONO_SLOT].is_active()
-                    && self.voices[MONO_SLOT].is_held();
+                    && self.slots[MONO_SLOT].sounding()
+                    && self.slots[MONO_SLOT].held;
                 if legato {
                     self.retune(note);
                 } else {
@@ -534,53 +612,87 @@ impl Engine {
                 Some((held_note, _)) => self.retune(held_note),
                 None => {
                     if held {
-                        self.sustained[MONO_SLOT] = true;
+                        self.slots[MONO_SLOT].sustained = true;
                     } else {
-                        self.voices[MONO_SLOT].release();
+                        self.release(MONO_SLOT);
                     }
                 }
             }
             return;
         }
-        for (slot, voice) in self.voices.iter_mut().enumerate() {
-            if voice.is_active()
-                && voice.is_held()
-                && voice.channel() == channel
-                && voice.note() == note
-            {
+        for slot in 0..POLYPHONY {
+            let state = self.slots[slot];
+            if state.sounding() && state.held && state.channel == channel && state.note == note {
                 if held {
-                    self.sustained[slot] = true;
+                    self.slots[slot].sustained = true;
                 } else {
-                    voice.release();
+                    self.release(slot);
                 }
             }
         }
     }
 
+    /// Give a voice a command at the current frame. A voice asked for more
+    /// than its block holds keeps what it was asked first; the rest is
+    /// counted, not silently lost.
+    fn command(&mut self, slot: usize, command: Command) {
+        let count = self.command_count[slot];
+        if count == COMMANDS_PER_BLOCK {
+            self.dropped += 1;
+            return;
+        }
+        self.commands[slot][count] = TimedCommand {
+            frame: self.frame,
+            command,
+        };
+        self.command_count[slot] = count + 1;
+    }
+
     /// Start a note in a slot, gliding from whatever was played before it.
     fn start(&mut self, slot: usize, channel: u8, note: u8, velocity: u8) {
-        let setup = self.controls.setup();
-        let glide = self.glide();
-        self.voices[slot].start(
-            &self.patch,
-            Key {
+        let command = Command::Start {
+            key: Key {
                 channel,
                 note,
                 velocity,
             },
-            &setup,
-            self.sample_rate,
-            glide,
-        );
-        self.sustained[slot] = false;
+            setup: self.controls.setup(),
+            glide: self.glide(),
+            patch: self.patch,
+        };
+        self.command(slot, command);
+        self.slots[slot] = Slot {
+            started: true,
+            silent: false,
+            held: true,
+            sustained: false,
+            channel,
+            note,
+            age: 0,
+            zero_run: 0,
+        };
     }
 
     /// Send the mono voice to another note, keeping its envelopes.
     fn retune(&mut self, note: u8) {
-        let setup = self.controls.setup();
-        let glide = self.glide();
-        self.voices[MONO_SLOT].retune(&self.patch, note, &setup, self.sample_rate, glide);
-        self.sustained[MONO_SLOT] = false;
+        let command = Command::Retune {
+            note,
+            setup: self.controls.setup(),
+            glide: self.glide(),
+        };
+        self.command(MONO_SLOT, command);
+        self.slots[MONO_SLOT].sustained = false;
+        self.slots[MONO_SLOT].note = note;
+    }
+
+    /// Let go of a held voice; one already let go is left alone.
+    fn release(&mut self, slot: usize) {
+        if !self.slots[slot].held {
+            return;
+        }
+        self.slots[slot].held = false;
+        self.slots[slot].sustained = false;
+        self.command(slot, Command::Release);
     }
 
     /// Where a new note starts from and how fast it arrives. A portamento
@@ -649,10 +761,9 @@ impl Engine {
                     self.pedals |= bit;
                 } else {
                     self.pedals &= !bit;
-                    for (slot, voice) in self.voices.iter_mut().enumerate() {
-                        if self.sustained[slot] && voice.channel() == channel {
-                            voice.release();
-                            self.sustained[slot] = false;
+                    for slot in 0..POLYPHONY {
+                        if self.slots[slot].sustained && self.slots[slot].channel == channel {
+                            self.release(slot);
                         }
                     }
                 }
@@ -660,9 +771,8 @@ impl Engine {
             CONTROL_PORTAMENTO => self.portamento_switch = value >= 0.5,
             CONTROL_ALL_NOTES_OFF => {
                 self.key_count = 0;
-                for (slot, voice) in self.voices.iter_mut().enumerate() {
-                    voice.release();
-                    self.sustained[slot] = false;
+                for slot in 0..POLYPHONY {
+                    self.release(slot);
                 }
             }
             CONTROL_ALL_SOUND_OFF => self.reset(),
@@ -683,10 +793,12 @@ impl Engine {
 
     /// Stop everything at once, with no release segment.
     pub fn reset(&mut self) {
-        for voice in &mut self.voices {
-            voice.silence();
+        for slot in 0..POLYPHONY {
+            if self.slots[slot].started {
+                self.command(slot, Command::Silence);
+            }
+            self.slots[slot] = Slot::default();
         }
-        self.sustained = [false; POLYPHONY];
         self.pedals = 0;
         self.bend_position = 0.0;
         self.wheel = 0.0;
@@ -700,11 +812,84 @@ impl Engine {
         self.retune_lfo();
     }
 
+    /// Voices with a note that has not fallen silent.
     pub fn active_voices(&self) -> usize {
-        self.voices.iter().filter(|voice| voice.is_active()).count()
+        self.slots.iter().filter(|slot| slot.sounding()).count()
     }
 
-    pub fn next_sample(&mut self) -> f32 {
+    /// The notes of the voices still sounding, in slot order.
+    pub fn sounding_notes(&self) -> impl Iterator<Item = u8> + '_ {
+        self.slots
+            .iter()
+            .filter(|slot| slot.sounding())
+            .map(|slot| slot.note)
+    }
+
+    /// The slot a new note should take: a free one, else the oldest released
+    /// note, else the oldest note of all.
+    fn allocate(&mut self) -> usize {
+        let mut free = None;
+        let mut released: Option<usize> = None;
+        let mut oldest = 0;
+        for (slot, state) in self.slots.iter().enumerate() {
+            if !state.sounding() {
+                free = Some(slot);
+                break;
+            }
+            if !state.held
+                && !state.sustained
+                && released.is_none_or(|best| state.age > self.slots[best].age)
+            {
+                released = Some(slot);
+            }
+            if state.age > self.slots[oldest].age {
+                oldest = slot;
+            }
+        }
+        if let Some(slot) = free {
+            return slot;
+        }
+        self.stolen += 1;
+        released.unwrap_or(oldest)
+    }
+
+    // ---- The block ---------------------------------------------------
+
+    /// Open a block of this many frames. Events given before this land on
+    /// its first frame; those given after [`Engine::set_frame`] land where
+    /// it says. Refuses an empty block or one longer than the engine plans
+    /// for.
+    pub fn begin_block(&mut self, frames: u32) -> bool {
+        if frames == 0 || frames as usize > MAX_BLOCK_FRAMES {
+            return false;
+        }
+        self.block_frames = frames;
+        self.frame = 0;
+        write_shape(
+            &mut self.shared,
+            BlockShape {
+                frames,
+                sample_rate: self.sample_rate,
+                modulation: MODULATION_CYCLES * self.controls.brightness,
+                operators: self.controls.operators,
+            },
+        );
+        true
+    }
+
+    /// The frame the next events land on, within the open block.
+    pub fn set_frame(&mut self, frame: u32) {
+        self.frame = frame.min(self.block_frames.saturating_sub(1));
+    }
+
+    /// Compute the performance of the current frame — bend, tuning, the
+    /// LFO, the controllers — for every voice to read, and move to the
+    /// next frame. Called once per frame of the open block.
+    pub fn advance_frame(&mut self) {
+        if self.frame >= self.block_frames {
+            return;
+        }
+        let frame = self.frame as usize;
         let modulation = self.lfo.advance();
         // Every controller opens the same destinations, so they are summed
         // per destination rather than each fighting for the whole depth.
@@ -752,39 +937,136 @@ impl Engine {
             modulation: MODULATION_CYCLES * self.controls.brightness,
             operators: self.controls.operators,
         };
-        let mut sum = 0.0;
-        for voice in &mut self.voices {
-            sum += voice.next_sample(&self.ops, &performance);
-        }
-        sum * self.gain as f32 * self.volume * self.expression
+        write_performance(&mut self.shared, frame, &performance);
+        self.scale[frame] = self.gain as f32 * self.volume * self.expression;
+        self.frame += 1;
     }
 
-    /// The slot a new note should take: a free one, else the oldest released
-    /// note, else the oldest note of all.
-    fn allocate(&mut self) -> usize {
-        let mut free = None;
-        let mut released: Option<usize> = None;
-        let mut oldest = 0;
-        for (slot, voice) in self.voices.iter().enumerate() {
-            if !voice.is_active() {
-                free = Some(slot);
-                break;
+    /// The block-shared payload, once every frame has been advanced.
+    pub fn shared(&self) -> &[u8] {
+        &self.shared[..shared_length(self.block_frames as usize)]
+    }
+
+    /// The dispatch payload for one voice this block: its commands, encoded
+    /// into `buffer`. `None` when the voice has nothing to do — no note
+    /// sounding and nothing asked of it — so the host need not run it.
+    pub fn dispatch(&self, slot: usize, buffer: &mut [u8]) -> Option<usize> {
+        let count = self.command_count[slot];
+        if !self.slots[slot].sounding() && count == 0 {
+            return None;
+        }
+        write_dispatch(buffer, &self.commands[slot][..count])
+    }
+
+    /// Close the block: sum the voices' audio in slot order, apply the
+    /// output scale, and learn which notes have died. `units` yields each
+    /// rendered voice's interleaved samples, ascending by slot; `output` is
+    /// `frames × channels`, overwritten.
+    pub fn end_block<'a>(
+        &mut self,
+        channels: usize,
+        units: impl IntoIterator<Item = (usize, &'a [f32])>,
+        output: &mut [f32],
+    ) {
+        let frames = self.block_frames as usize;
+        let samples = frames * channels;
+        output[..samples].fill(0.0);
+        let mut rendered = [false; POLYPHONY];
+        let silence_frames = (self.sample_rate * SILENCE_SECONDS) as u64;
+        for (slot, audio) in units {
+            if slot >= POLYPHONY || audio.len() < samples || channels == 0 {
+                continue;
             }
-            if !voice.is_held()
-                && !self.sustained[slot]
-                && released.is_none_or(|best| voice.age() > self.voices[best].age())
-            {
-                released = Some(slot);
+            rendered[slot] = true;
+            let mut all_zero = true;
+            for frame in 0..frames {
+                let sample = audio[frame * channels];
+                all_zero &= sample == 0.0;
+                output[frame * channels] += sample;
             }
-            if voice.age() > self.voices[oldest].age() {
-                oldest = slot;
+            // A voice that was given nothing and has produced nothing for
+            // long enough has finished its note: its envelopes are under
+            // the operator kernel's floor.
+            let state = &mut self.slots[slot];
+            state.zero_run = if all_zero {
+                state.zero_run + frames as u64
+            } else {
+                0
+            };
+            if all_zero && self.command_count[slot] == 0 && state.zero_run >= silence_frames {
+                state.silent = true;
             }
         }
-        if let Some(slot) = free {
-            return slot;
+        for (slot, state) in self.slots.iter_mut().enumerate() {
+            if state.started {
+                state.age += frames as u64;
+                // A voice the host did not run — quarantined, or never
+                // planned — cannot be heard from again.
+                if !rendered[slot] && self.command_count[slot] == 0 {
+                    state.silent = true;
+                }
+            }
         }
-        self.stolen += 1;
-        released.unwrap_or(oldest)
+        for frame in 0..frames {
+            let sample = output[frame * channels] * self.scale[frame];
+            for channel in 0..channels {
+                output[frame * channels + channel] = sample;
+            }
+        }
+        self.command_count = [0; POLYPHONY];
+        self.frame = 0;
+    }
+
+    // ---- The sequential path ------------------------------------------
+
+    /// One sample of the whole instrument. Events given between calls land
+    /// on it. This is the block contract run one frame at a time, which is
+    /// what the tests and the laboratory's measurements want.
+    pub fn next_sample(&mut self) -> f32 {
+        let mut output = [0.0_f32; 1];
+        self.render_block(&mut output);
+        output[0]
+    }
+
+    /// One block of the whole instrument, mono, on units the engine owns:
+    /// the pre-stage, every sounding voice, the post-stage — the same
+    /// stages a scheduling host runs across its own threads. Events given
+    /// before the call land on the block's first frame.
+    pub fn render_block(&mut self, output: &mut [f32]) {
+        let frames = output.len().min(MAX_BLOCK_FRAMES);
+        if frames == 0 || !self.begin_block(frames as u32) {
+            output.fill(0.0);
+            return;
+        }
+        for _ in 0..frames {
+            self.advance_frame();
+        }
+        let mut units = self
+            .units
+            .take()
+            .unwrap_or_else(|| Box::new(core::array::from_fn(|_| Unit::default())));
+        let mut buffers = self
+            .unit_output
+            .take()
+            .unwrap_or_else(|| vec![0.0; POLYPHONY * MAX_BLOCK_FRAMES].into_boxed_slice());
+        let mut payload = [0_u8; DISPATCH_STRIDE];
+        let mut rendered = [false; POLYPHONY];
+        for slot in 0..POLYPHONY {
+            if let Some(length) = self.dispatch(slot, &mut payload) {
+                let audio = &mut buffers[slot * MAX_BLOCK_FRAMES..][..frames];
+                rendered[slot] = units[slot].render(&payload[..length], self.shared(), audio);
+            }
+        }
+        self.end_block(
+            1,
+            (0..POLYPHONY)
+                .filter(|slot| rendered[*slot])
+                .map(|slot| (slot, &buffers[slot * MAX_BLOCK_FRAMES..][..frames])),
+            &mut output[..frames],
+        );
+        output[frames..].fill(0.0);
+        self.units = Some(units);
+        self.unit_output = Some(buffers);
     }
 }
 
@@ -880,7 +1162,7 @@ mod tests {
         assert_eq!(engine.active_voices(), POLYPHONY);
         assert_eq!(engine.stolen_notes(), 1);
         assert!(
-            engine.voices.iter().any(|voice| voice.note() == 60),
+            engine.sounding_notes().any(|note| note == 60),
             "the new note must actually sound"
         );
     }
@@ -895,11 +1177,11 @@ mod tests {
         render(&mut engine, 480);
         engine.note_on(0, 90, 100);
         assert!(
-            !engine.voices.iter().any(|voice| voice.note() == 47),
+            !engine.sounding_notes().any(|note| note == 47),
             "the released note should have been the one taken"
         );
         for note in 40..47 {
-            assert!(engine.voices.iter().any(|voice| voice.note() == note));
+            assert!(engine.sounding_notes().any(|sounding| sounding == note));
         }
     }
 

@@ -378,10 +378,12 @@ fn stress(options: &Options) -> Result<(), Box<dyn Error>> {
         engine.note_on(0, 36 + slot as u8 * 3, 100);
     }
     let mut peak = 0.0f32;
+    let mut block = [0.0_f32; BLOCK];
     let started = Instant::now();
     for _ in 0..blocks {
-        for _ in 0..BLOCK {
-            peak = peak.max(engine.next_sample().abs());
+        engine.render_block(&mut block);
+        for sample in block {
+            peak = peak.max(sample.abs());
         }
     }
     let elapsed = started.elapsed().as_secs_f64();
