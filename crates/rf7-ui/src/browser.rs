@@ -1094,7 +1094,13 @@ impl App {
             }
         } else if key == "resources" {
             if ok {
+                // The status can be what files the voices playing, so the
+                // store follows it as it follows a context.
+                let catalogs = self.state.catalogs.clone();
                 self.state.apply_resources(result);
+                if self.state.catalogs != catalogs {
+                    self.remember_catalogs();
+                }
             }
         } else if key == "bindings" {
             if ok {
