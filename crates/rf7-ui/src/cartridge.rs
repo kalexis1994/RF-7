@@ -3,7 +3,7 @@
 //! A DX7 voice cartridge is a near-square slab of dark plastic with a
 //! coloured band along the spine — the band is what shows on a shelf — and
 //! a dark label on its face: a large number, a hairline, two rows lettered A
-//! and B naming the two groups of thirty-two the switch on the spine chose
+//! and B naming the two groups of thirty-two the switch on the back chose
 //! between, a small print along one edge, and a serial in the corner. The
 //! voice ROMs wore a turquoise band; the data RAMs a silver one lettered in
 //! red. RF-7 draws its own cartridges the same way, in SVG, at whatever size
@@ -120,7 +120,7 @@ pub fn svg(face: &Face, key: &str) -> String {
 <rect x=\"24\" y=\"62\" width=\"192\" height=\"126\" rx=\"3\" fill=\"url(#cl-{k})\" stroke=\"#3d3e44\" stroke-width=\".7\"/>\
 <g clip-path=\"url(#cc-{k})\" font-family=\"Arial Narrow, Roboto Condensed, Segoe UI, sans-serif\" fill=\"{silver}\">\
 <text x=\"120\" y=\"91\" text-anchor=\"middle\" font-size=\"26\" font-weight=\"700\" letter-spacing=\"1\">{number}</text>\
-<g transform=\"translate(176 76)\" fill=\"none\" stroke=\"{silver}\" stroke-width=\".9\"><rect x=\"0\" y=\"0\" width=\"22\" height=\"8\" rx=\"2\"/><rect x=\"2.5\" y=\"1.8\" width=\"7\" height=\"4.4\" rx=\"1\" fill=\"{silver}\" stroke=\"none\"/><path d=\"M26 2 h4 M26 6 h4\"/></g>\
+\
 <line x1=\"36\" y1=\"102\" x2=\"204\" y2=\"102\" stroke=\"{silver}\" stroke-opacity=\".7\" stroke-width=\".9\"/>\
 <g font-size=\"9.5\" font-weight=\"700\" letter-spacing=\".6\">\
 <rect x=\"40\" y=\"110\" width=\"11\" height=\"11\" rx=\"1.2\" fill=\"none\" stroke=\"{silver}\" stroke-width=\".9\"/>\
