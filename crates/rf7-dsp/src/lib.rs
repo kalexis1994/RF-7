@@ -13,13 +13,13 @@ mod algorithm;
 /// rendering audio through it.
 pub mod envelope;
 mod lfo;
-mod sine;
+mod ops;
 mod tables;
 mod voice;
 
 pub use algorithm::{ALGORITHMS, Algorithm};
 pub use envelope::Envelope;
-pub use sine::Sine;
+pub use ops::Ops;
 pub use tables::{LEVEL_FULL, LEVEL_HEADROOM, modulation_index_at_level};
 pub use voice::{Glide, Key, MODULATION_CYCLES, NoteVoice, Performance, VoiceSetup};
 
@@ -298,7 +298,7 @@ pub struct Engine {
     voices: [NoteVoice; POLYPHONY],
     /// A note whose key is up but whose channel still holds the pedal.
     sustained: [bool; POLYPHONY],
-    sine: Sine,
+    ops: Ops,
     library: Library,
     program: usize,
     patch: Voice,
@@ -353,7 +353,7 @@ impl Engine {
         let mut engine = Self {
             voices: [NoteVoice::default(); POLYPHONY],
             sustained: [false; POLYPHONY],
-            sine: Sine::new(),
+            ops: Ops::new(),
             library,
             program: 0,
             patch,
@@ -754,7 +754,7 @@ impl Engine {
         };
         let mut sum = 0.0;
         for voice in &mut self.voices {
-            sum += voice.next_sample(&self.sine, &performance);
+            sum += voice.next_sample(&self.ops, &performance);
         }
         sum * self.gain as f32 * self.volume * self.expression
     }

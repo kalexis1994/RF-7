@@ -2,6 +2,16 @@
 
 ## 0.4.0 — done
 
+- The operator kernel as the OPS chip computes it. RF-7 had multiplied an
+  interpolated sine by a gain; the chip adds the envelope's attenuation to a
+  logarithmic sine — a quarter wave of 1024 entries in 1/1024 of an octave,
+  from Shirriff's die analysis — and takes the sum through a twelve-bit
+  mantissa table and a shifter. The engine now carries those tables at those
+  widths and does the same integer arithmetic per operator per sample, so
+  the grain of a quiet operator, the coarsening of a tail as it loses a bit
+  every six decibels, and the hard floor sixteen octaves down are in the
+  sound. Every voice still measures within its tolerance of its reference,
+  and the sixteen-voice load moved by seven per cent.
 - Portamento and a mono voice mode, both from the instrument's own
   behaviour. Mono has last-note priority and holds one voice, so a line
   never stacks the release tails of the notes it has left behind; a legato
@@ -315,15 +325,10 @@
    three sources agree; a recording of the calibration cartridge on a real
    DX7 would close the last per cent and check the level curve end to end.
    See [Calibration](CALIBRATION.md).
-2. **The envelope rate scale.** The quantisation is documented; the seconds each
-   quantised rate takes are not, at either end.
-4. **The pitch envelope curve**, which is currently a quadratic standing in for
-   a table.
-5. **A fixed-point operator kernel**: the logarithmic sine and the exponential
-   output table the OPS chip uses. The quantisation that introduces is audible,
-   and the kernel is already one function so nothing above it moves.
-6. **Detune as a constant phase increment** rather than a constant interval,
-   which is what makes it wider at the bottom of the keyboard.
+2. **A recording for the two timing numbers the firmware does not settle**:
+   the timer's tick, which sets every LFO speed, delay and pitch envelope
+   rate to within four per cent, and how deep one step of amplitude
+   modulation sensitivity goes, which is the EGS's own arithmetic.
 
 ## Then
 
@@ -331,7 +336,5 @@
   step instead of one cartridge at a time.
 - `parallel_render_v1`: sixteen voices split cleanly across audio workers, and
   this instrument is exactly the shape that contract was written for.
-- A whole-library `.syx` export — the thirty-two-voice bulk dump — for the
-  saved programs together; each one already leaves its own single-voice dump.
 - A voice name field in the editor, when the host's generic editor grows a
   text kind; today the name is the program's name in the host.

@@ -52,8 +52,6 @@ the 4064-unit range spans a little over 96 dB.
 | Seconds per rate | Documented, measured on the hardware | The MSFA project's measurements of a DX7 (its `Dx7Envelope` notes): at the slowest quantised rate the level moves one 0.0235 dB step every 4096 samples of the 49096 Hz clock — 0.28 dB a second — and four quantised steps double the speed, with the steps between linear, `(1 + (q mod 4) / 4) × 2^(q div 4)`. A decay is a straight line in decibels: 90 dB in 1.25 s at rate 50, 4 s at 40, 40 s at 20. RF-7's level unit is that step, so the table is used as measured. Before 0.4.0 the engine ran five times too fast on decays and three times too slow on attacks, which is why its pianos died and its strings smeared. |
 | The attack's shape | Documented, measured on the hardware | A rising segment multiplies the decay's step by `2 + ⌊(4095 − level) / 256⌋`, so it is fast from the bottom and slows towards the top — roughly linear in decibels — and it starts 1700 steps (40 dB) above the operator's floor, skipping the inaudible bottom of every attack. Rate 50 reaches a decibel under full in 0.16 s. |
 | Keyboard rate scaling `(sensitivity × clamp(note/3 − 7, 0, 31)) / 8` | Documented | |
-| Four quantised steps double the speed | **Approximate** | The base is set so the fastest full sweep is about 1.2 ms and the slowest about 63 s. Both ends want measuring. |
-| Rising segments slow as they approach the top | **Approximate** | An exponential approach to a ceiling 21% above unity, which reproduces the shape but not a measured curve. |
 | Pitch envelope levels | Documented, from the firmware | `TABLE_PITCH_EG_LEVEL`, verbatim: a level to a byte whose top seven bits are added to the voice's pitch word, which counts 4096 to the octave, so one step of the table is 3/8 of a semitone. 50 is the centre, the table is one step a level from 18 to 85 and steepens at the ends, and 0 and 99 are four octaves down and up. A quadratic curve stood here before; it was a third of the real deviation through the middle. |
 | Pitch envelope rates | Documented in part, from the firmware | `PITCH_EG_PROCESS` adds `TABLE_PITCH_EG_RATE[rate]` — the same table the portamento reads — to the pitch word on every second timer tick, and a segment ends when it reaches or crosses its level: a straight line in the logarithmic pitch domain at a speed that does not depend on the distance. Rate 99 moves 140 semitones a second, rate 50 twenty-two, rate 0 half of one. The tick is the same inferred 187 a second as the portamento's. Before this the pitch envelope borrowed the operators' rate curve. |
 
@@ -62,7 +60,7 @@ the 4064-unit range spans a little over 96 dB.
 | Mapping | Verdict | Note |
 | --- | --- | --- |
 | **Modulation index at level 99: 2^(17/16) cycles, π·2^(33/16) = 13.12 rad** | **Documented — derived, three sources agree** | The OPS adds the 14-bit operator output onto the 12-bit sine index, so full scale is four cycles (Shirriff's die analysis). The firmware never sends full scale: its velocity term at sensitivity 0 is a constant 15 sixteenths of an octave on every operator (read from the ROM). 4 × 2^(−15/16) = 2^(17/16) cycles, which is the π·2^(33/16) the literature quotes for the instrument and within four per cent of the DDX7 paper's 4π. Until 0.1.6 this was 1.0, and the instrument was half as bright as the DX7. A recording of the calibration cartridge — see [Calibration](CALIBRATION.md) — would confirm it to the last per cent; RF-7 measures itself at exactly this value. |
-| Feedback level 0..7 as powers of two, 7 being full | **Approximate** | Averaged over the last two samples, which is what stops a feedback operator oscillating at the Nyquist frequency. |
+| Feedback level 0..7 as powers of two, 7 being full | Documented in part, from the die analysis | The OPS shifts the feedback signal right by the feedback level's complement — a division by a power of two — and averages the previous two values of the operator before it modulates itself, which is what stops a feedback operator oscillating at the Nyquist frequency. RF-7 does both. Which shift each of the seven levels selects has not been read from the chip; the powers of two from full at 7 are the reading every description agrees on. |
 | LFO waveforms | Documented, from the firmware | Triangle, saw down, saw up, square, sine, sample and hold, each read from the phase word the way `LFO_GET_AMPLITUDE` reads it: the triangle starts at its bottom and peaks halfway, so a synced triangle vibrato begins a full depth below the note; the saws start at their centre and wrap halfway; the square is high first; the sine starts at zero; sample-and-hold draws on every wrap. |
 | LFO speed | Documented in part, from the firmware | `PATCH_ACTIVATE_SCALE_LFO_SPEED`: the speed scaled to 0..=255 times 11 is added to a sixteen-bit phase word on every timer tick, and from a scaled 160 up the multiplier climbs by one every four steps, which bends the top of the dial upwards. At the inferred 374 ticks a second that is 0.063 Hz at 0, 0.126 at 1, 49.5 at 99; the literature's 47 Hz at 99 would make the tick 355, and that four per cent is the one open number in every timing here. |
 | LFO delay and fade-in | Documented in part, from the firmware | `PATCH_ACTIVATE_SCALE_LFO_DELAY`: with `x = 99 − delay`, an increment of `(16 + x mod 16) << (2 + x / 16)` — a mantissa and an exponent, doubling every sixteen steps of the dial — is added to a sixteen-bit word every tick; when it overflows the fade counter climbs to 255 by the increment's top byte a tick, so the fade lasts about as long as the delay. Delay 99 waits 2.7 s and fades over 0.7; delay 0 still waits 36 ms. The same inferred tick. |
@@ -102,16 +100,38 @@ glance which controls would exist on the hardware and which are RF-7 making a
 whole cartridge playable without opening every voice. Editing one voice is
 [its own contract](EDITING.md).
 
-## The sine
+## The operator kernel
 
-A 4096-point table with linear interpolation, error below 10⁻⁵. The real OPS chip
-takes a logarithmic sine and an exponential output table, and the quantisation
-that introduces is audible. RF-7 does not model it yet; the operator kernel is
-one function so it can be replaced without touching anything above it.
+The OPS chip never multiplies a sine by a gain, and neither does RF-7. From
+Shirriff's die analysis of the YM21280: the twelve-bit phase — the top of the
+accumulator plus the modulation — indexes a quarter wave of 1024 entries
+holding `round(−log2(sin ω) × 1024)`, a fourteen-bit attenuation counted in
+1/1024 of an octave, with the other three quadrants folded by symmetry and a
+sign of their own. The envelope's attenuation is *added* to that in the log
+domain. The sum goes through the signal exponential: a 1024-entry table of
+twelve-bit mantissas indexed by the ten fraction bits, shifted right by the
+four-bit integer part, into a fourteen-bit magnitude. RF-7 carries those
+tables, built from the formula at those sizes, and does the same integer
+arithmetic per operator per sample; the engine's level units (256 to the
+octave, the EGS's own resolution) become the chip's 1/1024 steps on the way
+in, and the magnitude is scaled so the firmware's reference level is still
+unity on the way out.
+
+What the chip's arithmetic costs is now in the sound: a phase of 4096 steps
+under the modulation, a mantissa that loses one bit for every six decibels
+of attenuation — sixteen magnitudes left ten octaves down — and a hard floor
+sixteen octaves under full scale where an operator is exactly silent. The
+exact rounding of the chip's ROM entries has not been read bit for bit; the
+tables are the formula rounded to the chip's widths, and the kernel tests pin
+their widths, their ends, the floor and the coarsening. The chip's delta
+encoding of its tables is a storage matter and changes no value.
 
 ## What is deliberately not modelled
 
 - The DAC. The DX7 output stage and its converter are part of the sound.
-- Envelope level quantisation in the fixed-point domain the hardware uses.
+- The EGS side of the envelope arithmetic. The operator side — the level
+  as a 1/1024-octave attenuation added to the log-sine — is the chip's, but
+  the envelope segments themselves advance in floating point and are rounded
+  to the EGS's 1/256-octave steps only as they enter the operator.
 - The internal 49096 Hz sample rate. RF-7 runs at the host's rate.
 - Portamento, glissando and the function-parameter layer generally.
