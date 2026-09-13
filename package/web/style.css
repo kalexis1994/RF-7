@@ -655,12 +655,18 @@ h1, h2, h3, p { margin: 0; }
   pointer-events: none;
 }
 
+/* From the rim toward the centre, and never across it. Struck symmetrically
+   about the cap's middle, as this was, the marker looks the same pointing at
+   the first tick as at the last — and the printed scale sweeps 270 degrees,
+   so a bar that reads the same upside down leaves the player guessing which
+   half of it they are on. Stopping short of the centre is what makes the
+   pointer point. */
 .knob .marker::before {
   content: "";
   width: 3px;
-  height: 35%;
+  height: 38%;
   position: absolute;
-  top: 32.5%;
+  top: 9%;
   left: 50%;
   border-radius: 1px;
   background: #f4f1e7;
