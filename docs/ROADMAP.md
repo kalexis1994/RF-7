@@ -1,5 +1,13 @@
 # Roadmap
 
+## 0.5.1 — done
+
+- The knob marker points. It was struck symmetrically about the cap's middle,
+  so it read the same rotated by half a turn, and the printed scale sweeps two
+  hundred and seventy degrees: one picture stood for the first tick and for one
+  well past the top. It now runs from near the rim toward the centre and stops
+  short of it.
+
 ## 0.5.0 — done
 
 - Eight cartridges at once, and a library page to find them in. RF-7 held
