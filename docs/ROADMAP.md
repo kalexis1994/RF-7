@@ -1,5 +1,21 @@
 # Roadmap
 
+## 0.5.2 — done
+
+- The name on the display is RackForge's program selector while a program
+  plays: the same lit lettering, dim arrows either side, and a tap for the
+  whole library -- factory and cartridges and yours -- with a search and a
+  filter per bank. The host injects it into every plugin frame. An open
+  program shows its working name there instead, and the selector holds still
+  until it is saved or left, since the host refuses another program meanwhile.
+  The PROGRAMS page stays for browsing a bank's pads. The selector needs a
+  RackForge that injects it; an older host shows the display without one.
+- The head rail puts the logotype, RACKFORGE INSTRUMENTS and the keys across
+  the top, and gives the display the whole width under them, so a long program
+  name is no longer squeezed between the name and the keys.
+- The bank that is playing is marked with a dot again. The stylesheet carried
+  a stray control byte where the escape for the dot was meant.
+
 ## 0.5.1 — done
 
 - The knob marker points. It was struck symmetrically about the cap's middle,

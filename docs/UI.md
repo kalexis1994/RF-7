@@ -56,8 +56,14 @@ surface below.
 keys. The display shows the program number, its name, what the panel is doing
 to it — PLAYING, EDITING, EDITING · UNSAVED — and one line of machine state.
 The number is the program's own — the library slot, or U and its number for
-a saved program — and an open program keeps the number it came from. The
-keys are EDIT and NEW while a program plays; SAVE (its lamp lit while there
+a saved program — and an open program keeps the number it came from. While a
+program plays, its name is RackForge's program selector (`<rf-program-select>`,
+injected by the host into every plugin frame): arrows either side step through
+the library, and a tap on the name opens all of it with a search and a filter
+per bank. The browser layer makes the element once and puts it back in the
+display after every render; while a program is open the display shows the
+working name and the selector holds still. The keys are EDIT and NEW while a
+program plays; SAVE (its lamp lit while there
 are unsaved changes), COMPARE and EXIT, with the name field, while one is
 open. COMPARE plays the program as it opened for as long as it is down,
 shows those values on the knobs, and takes no edits until it is released;
