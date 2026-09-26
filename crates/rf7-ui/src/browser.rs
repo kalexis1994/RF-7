@@ -77,6 +77,10 @@ struct App {
     installing: Option<(usize, String)>,
     /// The bay the file explorer was opened for.
     choosing: Option<usize>,
+    /// RackForge's `<rf-program-select>`, made once and put back in the
+    /// display after every header render: a new element each time would lose
+    /// an open list mid-search.
+    program_selector: Element,
 }
 type Shared = Rc<RefCell<App>>;
 
@@ -163,7 +167,15 @@ impl App {
             }
             section.set_inner_html(&html[index]);
             self.rendered[index] = html[index].clone();
+            if let Some(slot) = self.document.get_element_by_id(render::PROGRAM_SLOT) {
+                let _ = slot.append_child(&self.program_selector);
+            }
         }
+        // An open program is the host's to finish first: it refuses another
+        // program until the draft is saved or left.
+        let _ = self
+            .program_selector
+            .toggle_attribute_with_force("disabled", self.state.draft.is_some());
         if let Some(root) = self.document.document_element() {
             let _ = root.set_attribute(
                 "data-editing",
@@ -997,6 +1009,16 @@ pub fn start() -> Result<(), JsValue> {
         .and_then(|storage| storage.get_item(CLIPBOARD_KEY).ok().flatten())
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
         .and_then(|value| Clipboard::from_json(&value));
+    let program_selector = document.create_element("rf-program-select")?;
+    for (name, value) in [
+        ("id", "program-selector"),
+        ("label", "Program"),
+        ("placeholder", "Search RF-7 programs"),
+        ("empty-label", "NO PROGRAM"),
+        ("hide-number", ""),
+    ] {
+        program_selector.set_attribute(name, value)?;
+    }
     let app: Shared = Rc::new(RefCell::new(App {
         window,
         document,
@@ -1015,6 +1037,7 @@ pub fn start() -> Result<(), JsValue> {
         envelope: None,
         installing: None,
         choosing: None,
+        program_selector,
     }));
     for kind in ["input", "change", "click"] {
         listen(&app, kind)?;

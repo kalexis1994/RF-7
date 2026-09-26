@@ -50,7 +50,7 @@ pub fn page_id(state: &State) -> &str {
 
 pub fn header(state: &State) -> String {
     let mut out = String::from(
-        "<div class=\"identity\"><span class=\"mark\">RF&#8209;7</span><span class=\"sub\">SIX&#8209;OPERATOR FM</span></div>",
+        "<div class=\"identity\"><span class=\"mark\">RF&#8209;7</span><span class=\"maker\">RACKFORGE INSTRUMENTS</span><span class=\"sub\">SIX&#8209;OPERATOR FM</span></div>",
     );
     out.push_str(&display(state));
     if state.surface == "config" {
@@ -135,14 +135,27 @@ fn display(state: &State) -> String {
     } else {
         state.status.to_uppercase()
     };
+    // While a program plays, its name is RackForge's program selector, which
+    // the browser layer puts in this slot: the name, arrows either side, and
+    // a tap for the whole list. An open program shows its own working name.
+    let name = if state.draft.is_some() || state.surface == "config" {
+        format!("<span class=\"name\">{}</span>", esc(&name))
+    } else {
+        format!(
+            "<span class=\"name program-slot\" id=\"{PROGRAM_SLOT}\" title=\"{}\"></span>",
+            esc(&name)
+        )
+    };
     format!(
-        "<div class=\"lcd\" data-ready=\"{}\"><span class=\"mode\">{mode}</span><span class=\"code\">{}</span><span class=\"name\">{}</span><span class=\"line\">{}</span></div>",
+        "<div class=\"lcd\" data-ready=\"{}\"><span class=\"mode\">{mode}</span><span class=\"code\">{}</span>{name}<span class=\"line\">{}</span></div>",
         state.connected,
         esc(&number),
-        esc(&name),
         esc(&status)
     )
 }
+
+/// Where the display takes RackForge's program selector.
+pub const PROGRAM_SLOT: &str = "program-selector-slot";
 
 /// `program-004` reads as 04 on the display; a saved program reads as U and
 /// its own number, `custom.user.rf7-003` as U03.
@@ -1290,6 +1303,18 @@ mod tests {
         let mut state = State::default();
         assert!(state.apply_context(&crate::model::tests::context(), "org.rackforge.rf7"));
         state
+    }
+
+    /// A playing program is named by RackForge's selector, in a slot in the
+    /// display; an open one keeps its working name there instead.
+    #[test]
+    fn the_display_holds_the_program_selector_while_a_program_plays() {
+        let mut playing = state();
+        playing.draft = None;
+        let html = header(&playing);
+        assert!(html.contains(&format!("id=\"{PROGRAM_SLOT}\"")), "{html}");
+        assert!(html.contains("PLAYING"));
+        assert!(!header(&state()).contains(PROGRAM_SLOT));
     }
 
     #[test]
