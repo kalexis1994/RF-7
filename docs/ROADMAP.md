@@ -1,5 +1,18 @@
 # Roadmap
 
+## 0.5.3 — done
+
+- Leaving RF-7 for another instrument no longer stalls the audio. The host
+  resets every unit of every instance it holds -- seventeen instances of
+  sixteen units on a Raspberry Pi 4 -- and each reset made the unit's
+  operator tables again, some two thousand logarithms and powers in software
+  as WebAssembly: 3.3 ms an instance, 55 ms in all, ten blocks the audio
+  thread could not render. A unit's reset now keeps its tables, which are a
+  function of nothing and never written after they are made: 12 µs an
+  instance, 0.4 ms in all, measured on the Pi through RackForge. A test holds
+  a reset unit to a new one, field for field and bit for bit in what it
+  plays.
+
 ## 0.5.2 — done
 
 - The name on the display is RackForge's program selector while a program
