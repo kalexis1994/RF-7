@@ -349,6 +349,16 @@ impl Default for Unit {
 }
 
 impl Unit {
+    /// Back to a new unit's state. The operator tables are kept: they are a
+    /// function of nothing, never written after they are made, and making
+    /// them is some two thousand logarithms and powers -- 3.3 ms an instance
+    /// as WebAssembly on a Raspberry Pi 4, whose host resets every unit of
+    /// seventeen instances when the player leaves the instrument.
+    pub fn reset(&mut self) {
+        self.voice = NoteVoice::default();
+        self.patch = Voice::init();
+    }
+
     /// The note this voice is playing, for tests and tools.
     pub fn voice(&self) -> &NoteVoice {
         &self.voice
@@ -605,5 +615,67 @@ mod tests {
         assert!(!unit.render(&[], &shared[..8], &mut output));
         assert!(output.iter().all(|s| *s == 0.0));
         assert!(unit.voice().is_active());
+    }
+
+    /// A reset keeps the operator tables and nothing else: the unit is a new
+    /// one, field for field, and plays the same bits as one.
+    #[test]
+    fn a_reset_unit_is_a_new_unit() {
+        let mut shared = [0_u8; shared_length(64)];
+        write_shape(
+            &mut shared,
+            BlockShape {
+                frames: 64,
+                sample_rate: 48_000.0,
+                modulation: crate::MODULATION_CYCLES,
+                operators: crate::ALL_OPERATORS,
+            },
+        );
+        for frame in 0..64 {
+            write_performance(&mut shared, frame, &Performance::default());
+        }
+        let start = |note, program| {
+            let commands = [TimedCommand {
+                frame: 3,
+                command: Command::Start {
+                    key: Key {
+                        channel: 0,
+                        note,
+                        velocity: 100,
+                    },
+                    setup: VoiceSetup::default(),
+                    glide: Glide::default(),
+                    patch: factory_voice(program),
+                },
+            }];
+            let mut payload = [0_u8; DISPATCH_STRIDE];
+            let length = write_dispatch(&mut payload, &commands).unwrap();
+            (payload, length)
+        };
+        let mut empty = [0_u8; DISPATCH_STRIDE];
+        let quiet = write_dispatch(&mut empty, &[]).unwrap();
+        let mut played = Unit::default();
+        let (payload, length) = start(57, 5);
+        let mut output = [0.0_f32; 64];
+        assert!(played.render(&payload[..length], &shared, &mut output));
+        for _ in 0..20 {
+            assert!(played.render(&empty[..quiet], &shared, &mut output));
+        }
+        played.reset();
+        let mut fresh = Unit::default();
+        assert_eq!(format!("{played:?}"), format!("{fresh:?}"));
+        let (payload, length) = start(69, 0);
+        for block in 0..40 {
+            let dispatch = if block == 0 {
+                &payload[..length]
+            } else {
+                &empty[..quiet]
+            };
+            let (mut a, mut b) = ([0.0_f32; 64], [0.0_f32; 64]);
+            assert!(played.render(dispatch, &shared, &mut a));
+            assert!(fresh.render(dispatch, &shared, &mut b));
+            assert!(a.iter().any(|s| *s != 0.0) || block > 0);
+            assert_eq!(a.map(f32::to_bits), b.map(f32::to_bits), "block {block}");
+        }
     }
 }

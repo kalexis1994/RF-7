@@ -436,6 +436,12 @@ impl ParallelProcessor for Rf7Processor {
         }
     }
 
+    /// A new unit's state without making its operator tables again: the
+    /// default would, sixteen units in every instance the host holds.
+    fn reset_unit(unit: &mut Unit) {
+        unit.reset();
+    }
+
     fn begin_resource(&mut self, id: &str, total_bytes: u64) -> bool {
         let Some(bay) = cartridge_bay(id).filter(|_| total_bytes <= MAX_RESOURCE_BYTES as u64)
         else {
