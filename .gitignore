@@ -2,7 +2,6 @@
 /dist/
 /renders/
 /cartridges/
-/.cargo/config.toml
 /package/component.wasm
 /package/LICENSE
 /package/NOTICE.md
