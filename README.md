@@ -2,7 +2,7 @@
 
 ![RF-7 instrument](package/branding/banner.png)
 
-RF-7 is a 16-voice FM synth for RackForge. Each voice has six sine operators and one of 32 algorithms. An operator can be heard directly as a carrier or change the sound of another operator as a modulator. The algorithm determines how they connect.
+RF-7 is a 16-voice FM synth for RackForge inspired by the Yamaha DX7. Each voice has six sine operators and one of 32 algorithms. An operator can be heard directly as a carrier or change the sound of another operator as a modulator. The algorithm determines how they connect.
 
 ## Install
 
