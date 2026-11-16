@@ -935,7 +935,7 @@ fn operator(state: &State, draft: &Draft, n: usize, carrier: bool) -> String {
         .map(|p| {
             let on = state.parameter_value(p.index).unwrap_or(p.value) >= 0.5;
             format!(
-                "<button type=\"button\" class=\"sw mini\" role=\"switch\" aria-checked=\"{on}\" data-param=\"{}\" data-toggle title=\"{}\"><span class=\"led\"></span><span class=\"l\">ON</span></button>",
+                "<button type=\"button\" class=\"sw mini\" role=\"switch\" data-rackforge-parameter-index=\"{0}\" aria-checked=\"{on}\" data-param=\"{0}\" data-toggle title=\"{1}\"><span class=\"led\"></span><span class=\"l\">ON</span></button>",
                 p.index,
                 esc(&p.name)
             )
@@ -1153,7 +1153,10 @@ fn control_labelled(state: &State, parameter: &Parameter, label: &str) -> String
     let value = state
         .parameter_value(parameter.index)
         .unwrap_or(parameter.value);
-    let binding = format!("data-param=\"{}\"", parameter.index);
+    let binding = format!(
+        "data-rackforge-parameter-index=\"{0}\" data-param=\"{0}\"",
+        parameter.index
+    );
     match &parameter.kind {
         ParameterKind::Float {
             minimum,
@@ -1547,7 +1550,9 @@ mod tests {
             "data-param=\"0\" min=\"0\" max=\"2\" step=\"0.01\" value=\"0.3\" data-default=\"0.3\""
         ));
         assert!(html.contains("<output>0.30x</output>"));
-        assert!(html.contains("aria-checked=\"true\" data-param=\"11\""));
+        assert!(html.contains(
+            "aria-checked=\"true\" data-rackforge-parameter-index=\"11\" data-param=\"11\""
+        ));
         assert!(html.contains("data-param=\"5\" data-value=\"1\" aria-pressed=\"true\">AMP<"));
         // The performance page is laid out by hand: the keyboard's own
         // settings, then one row per controller.
